@@ -34,6 +34,20 @@ class WorldScene extends Phaser.Scene {
     drawZone(this, 26, 6, 8, 6, "DJ Lounge", 0xff5251, 0.25);
 
     this.cursors = this.input.keyboard!.createCursorKeys();
+
+    // Robust keyboard input via DOM events (works even if canvas loses focus)
+    const setKey = (e: KeyboardEvent, down: boolean) => {
+      const k = e.key;
+      if (k === "ArrowLeft") this.keyState.left = down;
+      else if (k === "ArrowRight") this.keyState.right = down;
+      else if (k === "ArrowUp") this.keyState.up = down;
+      else if (k === "ArrowDown") this.keyState.down = down;
+      else return;
+      e.preventDefault();
+    };
+    window.addEventListener("keydown", (e) => setKey(e, true));
+    window.addEventListener("keyup", (e) => setKey(e, false));
+
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.target = {
         x: Math.floor(pointer.worldX / TILE),
@@ -85,15 +99,17 @@ class WorldScene extends Phaser.Scene {
 
     if (this.target) {
       tx = this.target.x; ty = this.target.y;
-    } else if (this.cursors.left.isDown) tx -= 1;
-    else if (this.cursors.right.isDown) tx += 1;
-    else if (this.cursors.up.isDown) ty -= 1;
-    else if (this.cursors.down.isDown) ty += 1;
+    } else if (this.keyState.left) tx -= 1;
+    else if (this.keyState.right) tx += 1;
+    else if (this.keyState.up) ty -= 1;
+    else if (this.keyState.down) ty += 1;
     else return;
 
     this.room.send("move", { x: tx, y: ty });
     if (this.target && Math.abs(px - tx) < 0.1 && Math.abs(py - ty) < 0.1) this.target = null;
   }
+
+  keyState: { left: boolean; right: boolean; up: boolean; down: boolean } = { left: false, right: false, up: false, down: false };
 
   addPlayer(id: string, player: any) {
     if (this.players.has(id)) return;

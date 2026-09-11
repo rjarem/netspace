@@ -2,7 +2,7 @@
 import { Client } from "colyseus.js";
 import { fileURLToPath } from "url";
 
-const c = new Client("ws://localhost:2569");
+const c = new Client("wss://api.turedvirtual.vip");
 const room: any = await c.joinOrCreate("world", { token: btoa("dev:probe") });
 await new Promise((r) => setTimeout(r, 1500));
 
