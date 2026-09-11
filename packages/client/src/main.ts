@@ -105,7 +105,13 @@ class WorldScene extends Phaser.Scene {
     else if (this.keyState.down) ty += 1;
     else return;
 
-    this.room.send("move", { x: tx, y: ty });
+    this.room.send("move", { x: Math.round(tx), y: Math.round(ty) });
+    // Optimistic local move: own schema changes don't echo back to the sender,
+    // so move our sprite immediately (server still validates).
+    me.sprite.x = Math.round(tx) * TILE + TILE / 2;
+    me.sprite.y = Math.round(ty) * TILE + TILE / 2;
+    me.label.x = me.sprite.x;
+    me.label.y = me.sprite.y - TILE * 0.85;
     if (this.target && Math.abs(px - tx) < 0.1 && Math.abs(py - ty) < 0.1) this.target = null;
   }
 

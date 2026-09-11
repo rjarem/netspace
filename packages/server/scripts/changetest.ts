@@ -1,0 +1,12 @@
+import { Client } from "colyseus.js";
+const c = new Client("wss://api.turedvirtual.vip");
+const obs: any = await c.joinOrCreate("world", { token: btoa("dev:observer") });
+let fired = 0;
+obs.state.players.onChange((p: any, id: string) => { fired++; console.log("onChange", id, p.x, p.y); });
+await new Promise((r) => setTimeout(r, 800));
+const mover: any = await c.joinOrCreate("world", { token: btoa("dev:movedemo") });
+await new Promise((r) => setTimeout(r, 500));
+mover.send("move", { x: 20, y: 20 });
+await new Promise((r) => setTimeout(r, 1500));
+console.log("total onChange fired:", fired);
+process.exit(0);
