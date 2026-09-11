@@ -9,6 +9,7 @@ export async function mintLiveKitToken(opts, _host, apiKey, apiSecret) {
     });
     at.addGrant({
         room: "netspace-world",
+        roomJoin: true,
         canPublish: opts.canPublish,
         canSubscribe: opts.canSubscribe,
         canPublishData: true,
