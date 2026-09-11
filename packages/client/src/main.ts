@@ -142,11 +142,26 @@ class WorldScene extends Phaser.Scene {
 
     if (this.target) {
       tx = this.target.x; ty = this.target.y;
+      // Mouse target expiry: if key is pressed, keys take priority and the
+      // stale target is dropped — otherwise a rejected/stuck target blocks
+      // arrow movement forever.
+      if (this.keyState.left || this.keyState.right || this.keyState.up || this.keyState.down) {
+        this.target = null;
+      }
     } else if (this.keyState.left) tx -= 1;
     else if (this.keyState.right) tx += 1;
     else if (this.keyState.up) ty -= 1;
     else if (this.keyState.down) ty += 1;
     else return;
+
+    // Arrow movement is relative to the SERVER position, not the local optimistic
+    // sprite — otherwise optimistic mouse moves desync and keys appear dead.
+    const sx = me.sprite.x / TILE, sy = me.sprite.y / TILE;
+    if (this.target === null && (Math.abs(sx - tx) > 0.6 || Math.abs(sy - ty) > 0.6)) {
+      // sprite drifted from server pos; snap back so arrows resume from truth
+      me.sprite.x = Math.round(px) * TILE + TILE / 2;
+      me.sprite.y = Math.round(py) * TILE + TILE / 2;
+    }
 
     this.room.send("move", { x: Math.round(tx), y: Math.round(ty) });
     // Optimistic local move ONLY if the target tile is legal (mirrors server rules).
@@ -185,11 +200,32 @@ class WorldScene extends Phaser.Scene {
       const room = new Room({ adaptiveStream: true, dynacast: true });
       room.on(RoomEvent.TrackSubscribed, () => this.updateVoiceStatus());
       room.on(RoomEvent.TrackUnsubscribed, () => this.updateVoiceStatus());
-      room.on(RoomEvent.ParticipantConnected, () => this.updateVoiceStatus());
-      room.on(RoomEvent.ParticipantDisconnected, () => this.updateVoiceStatus());
       await room.connect(msg.url, msg.token);
       this.lkRoom = room;
       this.pushDbg("voice-ok:" + msg.zoneId);
+      // Render remote participants: audio plays, video shows in a floating tile
+      room.on(RoomEvent.TrackSubscribed, (track: any, pub: any, participant: any) => {
+        if (track.kind === "audio") track.attach();
+        else if (track.kind === "video") this.showRemoteVideo(participant.identity, track);
+        this.updateVoiceStatus();
+      });
+      room.on(RoomEvent.TrackUnsubscribed, (track: any) => {
+        if (track.kind === "video") this.removeRemoteVideo(track);
+        this.updateVoiceStatus();
+      });
+      // Already-subscribed tracks (e.g. on rejoin)
+      for (const p of room.remoteParticipants.values()) {
+        for (const pub of p.trackPublications.values()) {
+          if (pub.isSubscribed && pub.track) {
+            if (pub.track.kind === "audio") pub.track.attach();
+            else this.showRemoteVideo(p.identity, pub.track);
+          }
+        }
+      }
+      // Local self-preview (bottom-left)
+      room.on(RoomEvent.LocalTrackPublished, (pub: any) => {
+        if (pub.track?.kind === "video") this.showLocalPreview(pub.track);
+      });
       // Publish mic audio (browser will prompt for permission the first time)
       try {
         await room.localParticipant.setMicrophoneEnabled(true);
@@ -220,6 +256,59 @@ class WorldScene extends Phaser.Scene {
     const n = this.lkRoom?.remoteParticipants.size ?? 0;
     const base = "✅ Conectado — click para moverte";
     st.textContent = n > 0 ? `${base} | 🎙️ ${n} en voz` : base;
+  }
+
+  /** Floating video overlay container (top-right). */
+  videoLayer(): HTMLElement {
+    let layer = document.getElementById("videoLayer") as HTMLElement | null;
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.id = "videoLayer";
+      layer.style.cssText = "position:fixed;top:10px;right:10px;display:flex;flex-direction:column;gap:8px;z-index:1000;";
+      document.body.appendChild(layer);
+    }
+    return layer;
+  }
+
+  /** Show a remote participant's video tile. */
+  showRemoteVideo(identity: string, track: any) {
+    const tileId = "vid-" + identity;
+    let tile = document.getElementById(tileId);
+    if (!tile) {
+      tile = document.createElement("div");
+      tile.id = tileId;
+      tile.style.cssText = "width:220px;height:125px;background:#000;border:2px solid #4f7cff;border-radius:6px;overflow:hidden;position:relative;";
+      const name = document.createElement("div");
+      name.style.cssText = "position:absolute;top:2px;left:4px;font:11px system-ui;color:#fff;background:#000000aa;padding:1px 5px;border-radius:3px;";
+      name.textContent = identity.slice(0, 12);
+      tile.appendChild(name);
+      this.videoLayer().appendChild(tile);
+    }
+    track.attach(tile);
+    this.pushDbg("video-remote:" + identity);
+  }
+
+  /** Remove a remote video tile when their track is gone. */
+  removeRemoteVideo(track: any) {
+    const el = track.attachedElements?.[0];
+    if (el?.parentElement?.id?.startsWith("vid-")) el.parentElement.remove();
+  }
+
+  /** Self preview, bottom-left, small. */
+  showLocalPreview(track: any) {
+    let tile = document.getElementById("selfPreview");
+    if (!tile) {
+      tile = document.createElement("div");
+      tile.id = "selfPreview";
+      tile.style.cssText = "position:fixed;bottom:12px;left:12px;width:180px;height:102px;background:#000;border:2px solid #00c853;border-radius:6px;overflow:hidden;z-index:1000;";
+      const name = document.createElement("div");
+      name.style.cssText = "position:absolute;top:2px;left:4px;font:11px system-ui;color:#fff;background:#000000aa;padding:1px 5px;border-radius:3px;z-index:2;";
+      name.textContent = "Tú";
+      tile.appendChild(name);
+      document.body.appendChild(tile);
+    }
+    track.attach(tile);
+    this.pushDbg("video-self");
   }
 
   addPlayer(id: string, player: any) {
