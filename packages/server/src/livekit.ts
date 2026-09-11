@@ -14,6 +14,7 @@ export async function mintLiveKitToken(
   });
   at.addGrant({
     room: "netspace-world",
+    roomJoin: true,
     canPublish: opts.canPublish,
     canSubscribe: opts.canSubscribe,
     canPublishData: true,
