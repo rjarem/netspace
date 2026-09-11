@@ -1,0 +1,30 @@
+{
+  "name": "@netspace/server",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@colyseus/monitor": "^0.15.0",
+    "@colyseus/schema": "2.0.37",
+    "@colyseus/ws-transport": "0.15.3",
+    "@netspace/shared": "workspace:*",
+    "colyseus": "0.15.57",
+    "express": "^4.21.0",
+    "jose": "^5.9.0",
+    "livekit-server-sdk": "^2.9.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.20.2",
+    "@types/ws": "^8.18.0",
+    "colyseus.js": "~0.15.28",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

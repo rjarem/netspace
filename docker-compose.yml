@@ -1,0 +1,53 @@
+services:
+  client:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npx --yes serve -s dist -l 80"
+    volumes:
+      - client_dist:/app/dist
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.netspace-client.rule=Host(`play.turedvirtual.vip`)"
+      - "traefik.http.routers.netspace-client.entrypoints=websecure"
+      - "traefik.http.routers.netspace-client.tls.certresolver=letsencrypt"
+      - "traefik.http.services.netspace-client.loadbalancer.server.port=80"
+
+  world:
+    build: ./packages/server
+    restart: unless-stopped
+    environment:
+      - PORT=2567
+      - DEV_NO_AUTH=1
+      - JWT_SECRET=netspace-dev-secret-change-me
+      - ADMIN_TOKEN=netspace-admin-dev
+      - LIVEKIT_HOST=wss://livekit.turedvirtual.vip
+      - LIVEKIT_API_KEY=devkey
+      - LIVEKIT_API_SECRET=devsecret-change-me
+    networks:
+      - dokploy-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.netspace-world.rule=Host(`api.turedvirtual.vip`)"
+      - "traefik.http.routers.netspace-world.entrypoints=websecure"
+      - "traefik.http.routers.netspace-world.tls.certresolver=letsencrypt"
+      - "traefik.http.services.netspace-world.loadbalancer.server.port=2567"
+
+  livekit:
+    image: livekit/livekit-server:latest
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    network_mode: host
+
+  coturn:
+    image: coturn/coturn:latest
+    restart: unless-stopped
+    network_mode: host
+
+volumes:
+  client_dist:
+
+networks:
+  dokploy-network:
+    external: true

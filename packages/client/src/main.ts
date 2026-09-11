@@ -1,0 +1,171 @@
+import Phaser from "phaser";
+import { Client, Room } from "colyseus.js";
+
+const TILE = 32;
+
+interface PlayerUI {
+  sprite: Phaser.GameObjects.Rectangle;
+  label: Phaser.GameObjects.Text;
+}
+
+class WorldScene extends Phaser.Scene {
+  room: Room<any> | null = null;
+  myId = "";
+  players: Map<string, PlayerUI> = new Map();
+  cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
+  target: { x: number; y: number } | null = null;
+  proximity: Record<string, number> = {};
+  tickInterval: any = null;
+
+  constructor() { super("world"); }
+
+  create() {
+    const mapW = 40, mapH = 30;
+
+    this.add.rectangle(mapW * TILE / 2, mapH * TILE / 2, mapW * TILE, mapH * TILE, 0x1c2130);
+
+    const g = this.add.graphics();
+    g.lineStyle(1, 0x232838, 1);
+    for (let x = 0; x <= mapW; x++) g.lineBetween(x * TILE, 0, x * TILE, mapH * TILE);
+    for (let y = 0; y <= mapH; y++) g.lineBetween(0, y * TILE, mapW * TILE, y * TILE);
+
+    drawZone(this, 15, 2, 10, 5, "Main Stage", 0x7c4dff, 0.25);
+    drawZone(this, 6, 14, 5, 4, "Round Table", 0x00bfa5, 0.25);
+    drawZone(this, 26, 6, 8, 6, "DJ Lounge", 0xff5251, 0.25);
+
+    this.cursors = this.input.keyboard!.createCursorKeys();
+    this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      this.target = {
+        x: Math.floor(pointer.worldX / TILE),
+        y: Math.floor(pointer.worldY / TILE),
+      };
+    });
+    this.cameras.main.setBounds(0, 0, mapW * TILE, mapH * TILE);
+  }
+
+  async connect(handle: string) {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const port = location.port === "5173" ? ":2567" : "";
+    const client = new Client(`${proto}://${location.hostname}${port}`);
+    try {
+      const room = (await client.joinOrCreate("world", { token: btoa(`dev:${handle}`) })) as Room<any>;
+      this.room = room;
+      this.myId = room.sessionId;
+
+      room.state.players.onAdd((player: any, id: string) => this.addPlayer(id, player));
+      room.state.players.onRemove((_: any, id: string) => this.removePlayer(id));
+      room.state.players.onChange((player: any, id: string) => this.movePlayer(id, player));
+
+      room.onMessage("proximity", (data: Record<string, Record<string, number>>) => {
+        this.proximity = data[this.myId] || {};
+        this.updateProximityVisuals();
+      });
+      room.onMessage("livekit", (msg: any) =>
+        console.log("[livekit]", msg.isViewer ? "viewer" : "publisher", msg.zoneId));
+
+      this.tickInterval = setInterval(() => this.tick(), 120);
+    } catch (e) {
+      console.error("join failed:", e);
+    }
+  }
+
+  tick() {
+    if (!this.room) return;
+    const me = this.players.get(this.myId);
+    if (!me) return;
+    const px = me.sprite.x / TILE, py = me.sprite.y / TILE;
+    let tx = px, ty = py;
+
+    if (this.target) {
+      tx = this.target.x; ty = this.target.y;
+    } else if (this.cursors.left.isDown) tx -= 1;
+    else if (this.cursors.right.isDown) tx += 1;
+    else if (this.cursors.up.isDown) ty -= 1;
+    else if (this.cursors.down.isDown) ty += 1;
+    else return;
+
+    this.room.send("move", { x: tx, y: ty });
+    if (this.target && Math.abs(px - tx) < 0.1 && Math.abs(py - ty) < 0.1) this.target = null;
+  }
+
+  addPlayer(id: string, player: any) {
+    if (this.players.has(id)) return;
+    const colors: Record<string, number> = {
+      blue: 0x4f7cff, green: 0x00c853, orange: 0xff9100, purple: 0xaa00ff,
+    };
+    const color = colors[player.avatarStyle] || 0x4f7cff;
+    const isMe = id === this.myId;
+    const sprite = this.add.rectangle(
+      player.x * TILE + TILE / 2, player.y * TILE + TILE / 2,
+      TILE * 0.7, TILE * 0.7, color, 1
+    );
+    if (isMe) sprite.setStrokeStyle(3, 0xffffff, 1);
+    const label = this.add.text(
+      sprite.x, sprite.y - TILE * 0.9, player.handle + (isMe ? " (yo)" : ""),
+      { font: "12px system-ui", color: "#fff", backgroundColor: "#00000088", padding: { x: 4, y: 2 } }
+    ).setOrigin(0.5);
+    this.players.set(id, { sprite, label });
+    this.cameras.main.startFollow(sprite, true, 0.1, 0.1);
+  }
+
+  removePlayer(id: string) {
+    const p = this.players.get(id);
+    if (!p) return;
+    p.sprite.destroy(); p.label.destroy();
+    this.players.delete(id);
+  }
+
+  movePlayer(id: string, player: any) {
+    const p = this.players.get(id);
+    if (!p) return;
+    this.tweens.add({
+      targets: [p.sprite, p.label],
+      x: player.x * TILE + TILE / 2,
+      y: player.y * TILE + TILE / 2,
+      duration: 110,
+      onUpdate: () => { p.label.x = p.sprite.x; p.label.y = p.sprite.y - TILE * 0.85; },
+    });
+  }
+
+  updateProximityVisuals() {
+    for (const [id, p] of this.players) {
+      if (id === this.myId) continue;
+      const vol = this.proximity[id] ?? 0;
+      p.sprite.setStrokeStyle(Math.round(vol * 3), 0xffffff, Math.min(1, vol * 1.5));
+    }
+  }
+}
+
+function drawZone(scene: WorldScene, x: number, y: number, w: number, h: number, label: string, color: number, alpha: number) {
+  const rect = scene.add.rectangle(
+    x * TILE + (w * TILE) / 2, y * TILE + (h * TILE) / 2,
+    w * TILE, h * TILE, color, alpha
+  );
+  rect.setStrokeStyle(2, color, 0.8);
+  scene.add.text(
+    x * TILE + (w * TILE) / 2, y * TILE + 4, label,
+    { font: "11px system-ui", color: "#ffffffcc" }
+  ).setOrigin(0.5, 0);
+}
+
+const game = new Phaser.Game({
+  type: Phaser.AUTO,
+  parent: "app",
+  width: window.innerWidth,
+  height: window.innerHeight,
+  backgroundColor: "#0f1117",
+  scale: { mode: Phaser.Scale.RESIZE },
+  scene: [WorldScene],
+});
+
+(document.getElementById("go") as HTMLButtonElement).onclick = () => {
+  const input = document.getElementById("handle") as HTMLInputElement;
+  const handle = (input.value || "invitado-" + Math.floor(Math.random() * 999)).trim();
+  (document.getElementById("join") as HTMLElement).style.display = "none";
+  const scene = game.scene.scenes[0] as WorldScene;
+  scene.connect(handle);
+};
+
+(document.getElementById("handle") as HTMLInputElement).addEventListener("keydown", (e) => {
+  if (e.key === "Enter") (document.getElementById("go") as HTMLButtonElement).click();
+});

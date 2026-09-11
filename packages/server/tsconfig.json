@@ -1,0 +1,13 @@
+{
+  "extends": "../shared/tsconfig.json",
+  "compilerOptions": {
+    "experimentalDecorators": true,
+    "useDefineForClassFields": false,
+    "outDir": "dist",
+    "noEmit": false,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"]
+  },
+  "include": ["src"]
+}
