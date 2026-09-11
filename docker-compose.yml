@@ -1,10 +1,9 @@
 services:
   client:
-    image: node:22-alpine
-    working_dir: /app
-    command: sh -c "npx --yes serve -s dist -l 80"
-    volumes:
-      - client_dist:/app/dist
+    build:
+      context: .
+      dockerfile: Dockerfile.client
+    restart: unless-stopped
     networks:
       - dokploy-network
     labels:
@@ -15,7 +14,9 @@ services:
       - "traefik.http.services.netspace-client.loadbalancer.server.port=80"
 
   world:
-    build: ./packages/server
+    build:
+      context: .
+      dockerfile: Dockerfile.server
     restart: unless-stopped
     environment:
       - PORT=2567
@@ -37,16 +38,8 @@ services:
   livekit:
     image: livekit/livekit-server:latest
     restart: unless-stopped
-    command: --config /etc/livekit.yaml
     network_mode: host
-
-  coturn:
-    image: coturn/coturn:latest
-    restart: unless-stopped
-    network_mode: host
-
-volumes:
-  client_dist:
+    command: --dev
 
 networks:
   dokploy-network:
