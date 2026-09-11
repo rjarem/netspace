@@ -39,7 +39,7 @@ services:
     image: livekit/livekit-server:latest
     restart: unless-stopped
     network_mode: host
-    command: --dev
+    command: --bind 0.0.0.0 --rtc.use-external-ip --rtc.tcp-port 7881 --rtc.port-range-start 50000 --rtc.port-range-end 60000 --keys devkey=devsecret-change-me
 
 networks:
   dokploy-network:
