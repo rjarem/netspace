@@ -1,0 +1,14 @@
+import { Client } from "colyseus.js";
+const c = new Client("wss://api.turedvirtual.vip");
+const room: any = await c.joinOrCreate("world", { token: btoa("dev:zonecheck2") });
+const msgs: any[] = [];
+room.onMessage("livekit", (m: any) => msgs.push({zone: m.zoneId, len: (m.token||"").length}));
+const pos: any[] = [];
+room.state.players.onAdd((p: any) => { pos.push([p.x,p.y]); p.onChange = () => pos.push([p.x,p.y]); });
+room.onStateChange?.(() => {});
+await new Promise(r => setTimeout(r, 800));
+console.log("my pos after join:", JSON.stringify(pos));
+room.send("move", { x: 8, y: 15 });
+await new Promise(r => setTimeout(r, 1500));
+console.log("positions:", JSON.stringify(pos.slice(-5)), "msgs:", JSON.stringify(msgs));
+process.exit(0);

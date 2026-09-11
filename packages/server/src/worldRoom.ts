@@ -116,6 +116,9 @@ export class WorldRoom extends Room<WorldState> {
     player.x = 4 + this.clients.length;
     player.y = 4;
     this.state.players.set(client.sessionId, player);
+    // F2 voice: emit the first LiveKit token immediately on join (spawn zone),
+    // otherwise attendees never cross a zone boundary and never receive one.
+    this.maybeRefreshLiveKitToken(client, player);
     console.log(`[join] ${player.handle} (${player.role})`);
   }
 

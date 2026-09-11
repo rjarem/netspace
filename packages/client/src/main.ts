@@ -101,12 +101,18 @@ class WorldScene extends Phaser.Scene {
       });
       room.onMessage("livekit", (msg: any) => {
         console.log("[livekit]", msg.isViewer ? "viewer" : "publisher", msg.zoneId);
+        this.pushDbg("livekit-msg:" + msg.zoneId + ":" + (msg.isViewer ? "viewer" : "pub"));
         this.joinVoice(msg);
       });
 
       this.tickInterval = setInterval(() => this.tick(), 120);
       const st = document.getElementById("status");
       if (st) st.textContent = "✅ Conectado — click para moverte";
+      // Debug handle for headless/server-side diagnostics
+      (window as any).__ns = {
+        scene: this,
+        dbg: [] as string[],
+      };
     } catch (e) {
       const st = document.getElementById("status");
       if (st) st.textContent = "❌ Error de conexión: " + (e as Error).message;
@@ -117,9 +123,15 @@ class WorldScene extends Phaser.Scene {
   tick() {
     if (!this.room) return;
     const me = this.players.get(this.myId);
-    if (!me) return;
+    if (!me) {
+      this.pushDbg("tick:no-me:" + this.myId);
+      return;
+    }
     const px = me.sprite.x / TILE, py = me.sprite.y / TILE;
     let tx = px, ty = py;
+    if (this.keyState.left || this.keyState.right || this.keyState.up || this.keyState.down) {
+      this.pushDbg("tick:key:" + JSON.stringify(this.keyState));
+    }
 
     if (this.target) {
       tx = this.target.x; ty = this.target.y;
@@ -143,6 +155,15 @@ class WorldScene extends Phaser.Scene {
 
   keyState: { left: boolean; right: boolean; up: boolean; down: boolean } = { left: false, right: false, up: false, down: false };
 
+  /** Append to the window.__ns debug ring buffer (headless diagnostics). */
+  pushDbg(s: string) {
+    const ns = (window as any).__ns;
+    if (ns) {
+      ns.dbg.push(s);
+      if (ns.dbg.length > 50) ns.dbg.shift();
+    }
+  }
+
   // ---- Voice (LiveKit) ----
   lkRoom: import("livekit-client").Room | null = null;
   lkZone = "";
@@ -161,6 +182,7 @@ class WorldScene extends Phaser.Scene {
       room.on(RoomEvent.ParticipantDisconnected, () => this.updateVoiceStatus());
       await room.connect(msg.url, msg.token);
       this.lkRoom = room;
+      this.pushDbg("voice-ok:" + msg.zoneId);
       // Publish mic audio (browser will prompt for permission the first time)
       try {
         await room.localParticipant.setMicrophoneEnabled(true);
@@ -171,6 +193,7 @@ class WorldScene extends Phaser.Scene {
       console.log("[voice] connected to", msg.zoneId);
     } catch (e) {
       console.error("[voice] connect failed:", e);
+      this.pushDbg("voice-fail:" + (e as Error).message.slice(0, 120));
     }
   }
 
