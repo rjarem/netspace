@@ -193,10 +193,10 @@ export class WorldRoom extends Room {
         this.updateZoneVisibility(player);
         this.sendLiveKitToken(client, player, zoneId);
     }
-    sendLiveKitToken(client, player, zoneId) {
+    async sendLiveKitToken(client, player, zoneId) {
         const zone = this.map.zones.find((z) => z.id === zoneId);
         const canPublish = !!zone && zone.allowedRoles.includes(player.role) && player.role !== "attendee";
-        const token = mintLiveKitToken({
+        const token = await mintLiveKitToken({
             identity: client.sessionId,
             name: player.handle,
             canPublish: canPublish,

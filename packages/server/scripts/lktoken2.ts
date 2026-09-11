@@ -1,0 +1,10 @@
+import { Client } from "colyseus.js";
+const c = new Client("wss://api.turedvirtual.vip");
+const room: any = await c.joinOrCreate("world", { token: btoa("dev:lkcheck4") });
+const msgs: any[] = [];
+room.onMessage("livekit", (m: any) => msgs.push(JSON.stringify(m).slice(0, 300)));
+await new Promise(r => setTimeout(r, 800));
+room.send("move", { x: 9, y: 4 });
+await new Promise(r => setTimeout(r, 1500));
+console.log(msgs[0] || "NONE");
+process.exit(0);

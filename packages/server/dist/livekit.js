@@ -1,6 +1,6 @@
 // LiveKit token minting
 import { AccessToken } from "livekit-server-sdk";
-export function mintLiveKitToken(opts, _host, apiKey, apiSecret) {
+export async function mintLiveKitToken(opts, _host, apiKey, apiSecret) {
     if (!apiKey || !apiSecret)
         return ""; // voice disabled without config
     const at = new AccessToken(apiKey, apiSecret, {
@@ -13,5 +13,5 @@ export function mintLiveKitToken(opts, _host, apiKey, apiSecret) {
         canSubscribe: opts.canSubscribe,
         canPublishData: true,
     });
-    return at.toJwt();
+    return (await at.toJwt());
 }

@@ -160,10 +160,10 @@ export class WorldRoom extends Room<WorldState> {
     this.sendLiveKitToken(client, player, zoneId);
   }
 
-  sendLiveKitToken(client: Client, player: PlayerState, zoneId: string) {
+  async sendLiveKitToken(client: Client, player: PlayerState, zoneId: string) {
     const zone = this.map.zones.find((z) => z.id === zoneId);
     const canPublish = !!zone && (zone.allowedRoles as string[]).includes(player.role) && player.role !== "attendee";
-    const token = mintLiveKitToken({
+    const token = await mintLiveKitToken({
       identity: client.sessionId,
       name: player.handle,
       canPublish: canPublish,
