@@ -3,6 +3,28 @@ import { Client, Room } from "colyseus.js";
 
 const TILE = 32;
 
+// Client-side copy of restricted zones + walls (mirrors server world.ts).
+// Attendee is the dev default role; zones list which roles may enter.
+const RESTRICTED_ZONES = [
+  { x: 15, y: 2, w: 10, h: 5, allowed: ["admin", "speaker"] },          // Main Stage
+  { x: 6, y: 14, w: 5, h: 4, allowed: ["admin", "speaker", "panelist"] }, // Round Table
+  { x: 26, y: 6, w: 8, h: 6, allowed: ["admin", "speaker", "dj"] },      // DJ Lounge
+];
+const WALLY = (x: number, y: number) =>
+  y === 0 || y === 29 || x === 0 || x === 39 ||
+  (x === 14 && y >= 5 && y < 12) || (x === 30 && y >= 18 && y < 24);
+
+function tileBlocked(x: number, y: number): boolean {
+  const tx = Math.floor(x), ty = Math.floor(y);
+  if (WALLY(tx, ty)) return true;
+  for (const z of RESTRICTED_ZONES) {
+    if (tx >= z.x && tx < z.x + z.w && ty >= z.y && ty < z.y + z.h) {
+      if (!z.allowed.includes("attendee")) return true;
+    }
+  }
+  return false;
+}
+
 interface PlayerUI {
   sprite: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
@@ -106,12 +128,14 @@ class WorldScene extends Phaser.Scene {
     else return;
 
     this.room.send("move", { x: Math.round(tx), y: Math.round(ty) });
-    // Optimistic local move: own schema changes don't echo back to the sender,
-    // so move our sprite immediately (server still validates).
-    me.sprite.x = Math.round(tx) * TILE + TILE / 2;
-    me.sprite.y = Math.round(ty) * TILE + TILE / 2;
-    me.label.x = me.sprite.x;
-    me.label.y = me.sprite.y - TILE * 0.85;
+    // Optimistic local move ONLY if the target tile is legal (mirrors server rules).
+    // Own schema changes don't echo back to the sender, so we draw locally.
+    if (!tileBlocked(tx, ty)) {
+      me.sprite.x = Math.round(tx) * TILE + TILE / 2;
+      me.sprite.y = Math.round(ty) * TILE + TILE / 2;
+      me.label.x = me.sprite.x;
+      me.label.y = me.sprite.y - TILE * 0.85;
+    }
     if (this.target && Math.abs(px - tx) < 0.1 && Math.abs(py - ty) < 0.1) this.target = null;
   }
 
