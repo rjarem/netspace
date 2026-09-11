@@ -165,7 +165,10 @@ export class WorldRoom extends Room<WorldState> {
 
   async sendLiveKitToken(client: Client, player: PlayerState, zoneId: string) {
     const zone = this.map.zones.find((z) => z.id === zoneId);
-    const canPublish = !!zone && (zone.allowedRoles as string[]).includes(player.role) && player.role !== "attendee";
+    // Networking concept: everyone can publish (mic + cam) while chatting.
+    // Zone-based muting (stage areas = listen-only for audience) comes later;
+    // for the MVP dev phase every participant gets publish rights.
+    const canPublish = true;
     const token = await mintLiveKitToken({
       identity: client.sessionId,
       name: player.handle,
