@@ -45,8 +45,11 @@ class WorldScene extends Phaser.Scene {
 
   async connect(handle: string) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const port = location.port === "5173" ? ":2567" : "";
-    const client = new Client(`${proto}://${location.hostname}${port}`);
+    // Production: Colyseus lives on api.turedvirtual.vip; dev: localhost:2567
+    const server = location.port === "5173"
+      ? "ws://localhost:2567"
+      : `${proto}://api.${location.hostname.replace(/^play\./, "")}`;
+    const client = new Client(server);
     try {
       const room = (await client.joinOrCreate("world", { token: btoa(`dev:${handle}`) })) as Room<any>;
       this.room = room;
