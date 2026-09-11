@@ -147,16 +147,16 @@ export class WorldRoom extends Room {
             throw new ServerError(401, "invalid token");
         return claims;
     }
-    onJoin(client, auth) {
+    onJoin(client, _options, auth) {
         const player = new PlayerState();
-        player.handle = auth.handle;
-        player.role = auth.role;
+        player.handle = auth?.handle ?? "invitado";
+        player.role = (auth?.role ?? "attendee");
         player.avatarStyle = ["blue", "green", "orange", "purple"][this.clients.length % 4];
         // Spawn outside all restricted zones
         player.x = 4 + this.clients.length;
         player.y = 4;
         this.state.players.set(client.sessionId, player);
-        console.log(`[join] ${auth.handle} (${auth.role})`);
+        console.log(`[join] ${player.handle} (${player.role})`);
     }
     onLeave(client) {
         this.state.players.delete(client.sessionId);

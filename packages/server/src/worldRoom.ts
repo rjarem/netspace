@@ -107,16 +107,16 @@ export class WorldRoom extends Room<WorldState> {
     return claims;
   }
 
-  onJoin(client: Client, auth: { handle: string; role: UserRole }) {
+  onJoin(client: Client, _options: any, auth?: { handle: string; role: UserRole }) {
     const player = new PlayerState();
-    player.handle = auth.handle;
-    player.role = auth.role;
+    player.handle = auth?.handle ?? "invitado";
+    player.role = (auth?.role ?? "attendee") as UserRole;
     player.avatarStyle = ["blue", "green", "orange", "purple"][this.clients.length % 4];
     // Spawn outside all restricted zones
     player.x = 4 + this.clients.length;
     player.y = 4;
     this.state.players.set(client.sessionId, player);
-    console.log(`[join] ${auth.handle} (${auth.role})`);
+    console.log(`[join] ${player.handle} (${player.role})`);
   }
 
   onLeave(client: Client) {
