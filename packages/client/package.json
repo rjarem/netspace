@@ -10,6 +10,7 @@
   "dependencies": {
     "@netspace/shared": "workspace:*",
     "colyseus.js": "^0.15.28",
+    "livekit-client": "^2.22.3",
     "phaser": "^3.85.0"
   },
   "devDependencies": {

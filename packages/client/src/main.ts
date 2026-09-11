@@ -99,8 +99,10 @@ class WorldScene extends Phaser.Scene {
         this.proximity = data[this.myId] || {};
         this.updateProximityVisuals();
       });
-      room.onMessage("livekit", (msg: any) =>
-        console.log("[livekit]", msg.isViewer ? "viewer" : "publisher", msg.zoneId));
+      room.onMessage("livekit", (msg: any) => {
+        console.log("[livekit]", msg.isViewer ? "viewer" : "publisher", msg.zoneId);
+        this.joinVoice(msg);
+      });
 
       this.tickInterval = setInterval(() => this.tick(), 120);
       const st = document.getElementById("status");
@@ -140,6 +142,45 @@ class WorldScene extends Phaser.Scene {
   }
 
   keyState: { left: boolean; right: boolean; up: boolean; down: boolean } = { left: false, right: false, up: false, down: false };
+
+  // ---- Voice (LiveKit) ----
+  lkRoom: import("livekit-client").Room | null = null;
+  lkZone = "";
+
+  async joinVoice(msg: { token: string; url: string; zoneId: string }) {
+    if (!msg.token || !msg.url) return;
+    if (this.lkZone === msg.zoneId && this.lkRoom) return; // already in this zone
+    this.lkZone = msg.zoneId;
+    try {
+      if (this.lkRoom) { await this.lkRoom.disconnect(); this.lkRoom = null; }
+      const { Room, RoomEvent } = await import("livekit-client");
+      const room = new Room({ adaptiveStream: true, dynacast: true });
+      room.on(RoomEvent.TrackSubscribed, () => this.updateVoiceStatus());
+      room.on(RoomEvent.TrackUnsubscribed, () => this.updateVoiceStatus());
+      room.on(RoomEvent.ParticipantConnected, () => this.updateVoiceStatus());
+      room.on(RoomEvent.ParticipantDisconnected, () => this.updateVoiceStatus());
+      await room.connect(msg.url, msg.token);
+      this.lkRoom = room;
+      // Publish mic audio (browser will prompt for permission the first time)
+      try {
+        await room.localParticipant.setMicrophoneEnabled(true);
+        this.updateVoiceStatus();
+      } catch (micErr) {
+        console.warn("[voice] mic permission denied or unavailable:", micErr);
+      }
+      console.log("[voice] connected to", msg.zoneId);
+    } catch (e) {
+      console.error("[voice] connect failed:", e);
+    }
+  }
+
+  updateVoiceStatus() {
+    const st = document.getElementById("status");
+    if (!st) return;
+    const n = this.lkRoom?.remoteParticipants.size ?? 0;
+    const base = "✅ Conectado — click para moverte";
+    st.textContent = n > 0 ? `${base} | 🎙️ ${n} en voz` : base;
+  }
 
   addPlayer(id: string, player: any) {
     if (this.players.has(id)) return;
