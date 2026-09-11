@@ -69,6 +69,13 @@ class WorldScene extends Phaser.Scene {
     };
     window.addEventListener("keydown", (e) => setKey(e, true));
     window.addEventListener("keyup", (e) => setKey(e, false));
+    // Phaser's own cursor-key listeners can capture/consume arrow keys via its
+    // keyboard plugin (and capture) without ours firing state changes — disable
+    // capture so arrows always reach the DOM listeners above.
+    this.input.keyboard!.disableGlobalCapture();
+    window.addEventListener("blur", () => {
+      this.keyState = { left: false, right: false, up: false, down: false };
+    });
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       this.target = {
@@ -168,7 +175,7 @@ class WorldScene extends Phaser.Scene {
   lkRoom: import("livekit-client").Room | null = null;
   lkZone = "";
 
-  async joinVoice(msg: { token: string; url: string; zoneId: string }) {
+  async joinVoice(msg: { token: string; url: string; zoneId: string; isViewer?: boolean }) {
     if (!msg.token || !msg.url) return;
     if (this.lkZone === msg.zoneId && this.lkRoom) return; // already in this zone
     this.lkZone = msg.zoneId;
@@ -189,6 +196,16 @@ class WorldScene extends Phaser.Scene {
         this.updateVoiceStatus();
       } catch (micErr) {
         console.warn("[voice] mic permission denied or unavailable:", micErr);
+      }
+      // Publish camera too (only allowed for non-viewer roles; harmless no-op otherwise)
+      if (!msg.isViewer) {
+        try {
+          await room.localParticipant.setCameraEnabled(true);
+          this.pushDbg("cam-ok:" + msg.zoneId);
+        } catch (camErr) {
+          console.warn("[voice] camera permission denied or unavailable:", camErr);
+          this.pushDbg("cam-fail:" + (camErr as Error).message.slice(0, 120));
+        }
       }
       console.log("[voice] connected to", msg.zoneId);
     } catch (e) {
