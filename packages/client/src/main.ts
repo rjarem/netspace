@@ -67,7 +67,11 @@ class WorldScene extends Phaser.Scene {
         console.log("[livekit]", msg.isViewer ? "viewer" : "publisher", msg.zoneId));
 
       this.tickInterval = setInterval(() => this.tick(), 120);
+      const st = document.getElementById("status");
+      if (st) st.textContent = "✅ Conectado — click para moverte";
     } catch (e) {
+      const st = document.getElementById("status");
+      if (st) st.textContent = "❌ Error de conexión: " + (e as Error).message;
       console.error("join failed:", e);
     }
   }
