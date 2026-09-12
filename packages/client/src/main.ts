@@ -135,6 +135,17 @@ class WorldScene extends Phaser.Scene {
     }
   }
 
+  /** Optimistic local draw, mirrors server clamping (borders) + walls. */
+  drawOptimistic(me: any, tx: number, ty: number) {
+    const clx = Math.max(1, Math.min(38, Math.round(tx)));
+    const cly = Math.max(1, Math.min(28, Math.round(ty)));
+    if (tileBlocked(clx, cly)) return;
+    me.sprite.x = clx * TILE + TILE / 2;
+    me.sprite.y = cly * TILE + TILE / 2;
+    me.label.x = me.sprite.x;
+    me.label.y = me.sprite.y - TILE * 0.85;
+  }
+
   tick() {
     if (!this.room) return;
     const me = this.players.get(this.myId);
@@ -174,12 +185,7 @@ class WorldScene extends Phaser.Scene {
     this.room.send("move", { x: Math.round(tx), y: Math.round(ty) });
     // Optimistic local move ONLY if the target tile is legal (mirrors server rules).
     // Own schema changes don't echo back to the sender, so we draw locally.
-    if (!tileBlocked(tx, ty)) {
-      me.sprite.x = Math.round(tx) * TILE + TILE / 2;
-      me.sprite.y = Math.round(ty) * TILE + TILE / 2;
-      me.label.x = me.sprite.x;
-      me.label.y = me.sprite.y - TILE * 0.85;
-    }
+    this.drawOptimistic(me, tx, ty);
     if (this.target && Math.abs(px - tx) < 0.1 && Math.abs(py - ty) < 0.1) this.target = null;
   }
 
