@@ -169,12 +169,12 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     // PTZ-style d-pad (floating, mobile-first): tap arrows to step-move.
     const dp = document.createElement("div");
     dp.id = "dpad";
-    dp.style.cssText = "position:fixed;left:14px;bottom:14px;width:132px;height:132px;z-index:61;display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(3,44px);gap:0;opacity:0.85;touch-action:none;user-select:none;-webkit-user-select:none;";
+    dp.style.cssText = "position:fixed;left:12px;bottom:calc(18px + env(safe-area-inset-bottom, 0px));width:150px;height:150px;z-index:61;display:grid;grid-template-columns:repeat(3,50px);grid-template-rows:repeat(3,50px);gap:0;touch-action:none;user-select:none;-webkit-user-select:none;";
     const mkBtn = (label: string, dir: "up" | "down" | "left" | "right", gridArea: string) => {
       const btn = document.createElement("div");
       btn.textContent = label;
       btn.dataset.dir = dir;
-      btn.style.cssText = `grid-area:${gridArea};display:flex;align-items:center;justify-content:center;font:20px system-ui;color:#fff;background:#0b0e16cc;border:1px solid #2a3350;border-radius:10px;cursor:pointer;`;
+      btn.style.cssText = `grid-area:${gridArea};display:flex;align-items:center;justify-content:center;font:24px system-ui;font-weight:bold;color:#111;background:#ffffff;border:2px solid #111;border-radius:12px;cursor:pointer;box-shadow:0 2px 6px #0008;`;
       dp.appendChild(btn);
     };
     mkBtn("\u2191", "up", "1 / 2");
@@ -564,9 +564,12 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       const row = document.createElement("div");
       row.title = p.handle || id;
       row.style.cssText = "display:flex;align-items:center;gap:6px;padding:3px 2px;cursor:pointer;border-radius:6px;";
+      // Pill button with the handle (first word, max 8 chars) — much more intuitive than initials
+      const full = (p.handle || id).trim();
+      const short = (full.split(/\s+/)[0] || full).slice(0, 8);
       const dot = document.createElement("span");
-      dot.style.cssText = `width:26px;height:26px;border-radius:50%;background:${p.avatarColor};flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;font:12px system-ui;color:#fff;`;
-      dot.textContent = (p.handle || id).slice(0, 2).toUpperCase();
+      dot.style.cssText = `min-width:26px;height:26px;padding:0 8px;border-radius:13px;background:${p.avatarColor};flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;font:bold 12px system-ui;color:#fff;box-shadow:0 1px 4px #0007;white-space:nowrap;`;
+      dot.textContent = short;
       row.appendChild(dot);
       if (expanded) {
         const nm = document.createElement("span");
