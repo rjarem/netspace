@@ -293,6 +293,8 @@ class WorldScene extends Phaser.Scene {
       this.videoLayer().appendChild(tile);
     }
     if (typeof track.attach === "function") track.attach(tile);
+    const rvid = tile.querySelector("video") as HTMLVideoElement | null;
+    rvid?.play().catch(() => {});
     this.pushDbg("video-remote:" + identity);
   }
 
@@ -318,7 +320,16 @@ class WorldScene extends Phaser.Scene {
       tile.appendChild(name);
       document.body.appendChild(tile);
     }
-    track.attach(tile);
+    // attach() needs an HTMLMediaElement (video), not a div
+    let vid = tile.querySelector("video") as HTMLVideoElement | null;
+    if (!vid) {
+      vid = document.createElement("video");
+      vid.style.cssText = "width:100%;height:100%;object-fit:cover;transform:scaleX(-1);";
+      vid.autoplay = true; vid.playsInline = true; vid.muted = true;
+      tile.appendChild(vid);
+    }
+    track.attach(vid);
+    vid.play().catch(() => {});
     this.pushDbg("video-self");
   }
 
