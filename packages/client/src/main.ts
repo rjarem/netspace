@@ -166,6 +166,39 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       }
     });
 
+    // PTZ-style d-pad (floating, mobile-first): tap arrows to step-move.
+    const dp = document.createElement("div");
+    dp.id = "dpad";
+    dp.style.cssText = "position:fixed;left:14px;bottom:14px;width:132px;height:132px;z-index:61;display:grid;grid-template-columns:repeat(3,44px);grid-template-rows:repeat(3,44px);gap:0;opacity:0.85;touch-action:none;user-select:none;-webkit-user-select:none;";
+    const mkBtn = (label: string, dir: "up" | "down" | "left" | "right", gridArea: string) => {
+      const btn = document.createElement("div");
+      btn.textContent = label;
+      btn.dataset.dir = dir;
+      btn.style.cssText = `grid-area:${gridArea};display:flex;align-items:center;justify-content:center;font:20px system-ui;color:#fff;background:#0b0e16cc;border:1px solid #2a3350;border-radius:10px;cursor:pointer;`;
+      dp.appendChild(btn);
+    };
+    mkBtn("\u2191", "up", "1 / 2");
+    mkBtn("\u2190", "left", "2 / 1");
+    mkBtn("\u2192", "right", "2 / 3");
+    mkBtn("\u2193", "down", "3 / 2");
+    document.body.appendChild(dp);
+    dp.addEventListener("pointerdown", (ev) => {
+      const t = (ev.target as HTMLElement).closest("[data-dir]") as HTMLElement | null;
+      if (!t) return;
+      ev.preventDefault();
+      const dir = t.dataset.dir as "up" | "down" | "left" | "right";
+      if (dir === "up") this.keyState.up = true;
+      else if (dir === "down") this.keyState.down = true;
+      else if (dir === "left") this.keyState.left = true;
+      else if (dir === "right") this.keyState.right = true;
+      // release shortly after — one step per tap (long-press = keep moving)
+      clearTimeout((dp as any)._t);
+      (dp as any)._t = setTimeout(() => {
+        this.keyState.up = this.keyState.down = this.keyState.left = this.keyState.right = false;
+      }, 260);
+    });
+    dp.addEventListener("pointerup", () => clearTimeout((dp as any)._hold));
+
     // Zoom with mouse wheel (desktop)
     this.input.on("wheel", (_p: unknown, _o: unknown, _d: unknown, dy: number) => {
       const cam = this.cameras.main;
@@ -526,13 +559,13 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       row.title = p.handle || id;
       row.style.cssText = "display:flex;align-items:center;gap:6px;padding:3px 2px;cursor:pointer;border-radius:6px;";
       const dot = document.createElement("span");
-      dot.style.cssText = `width:20px;height:20px;border-radius:50%;background:${p.avatarColor};flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;font:10px system-ui;color:#fff;`;
+      dot.style.cssText = `width:26px;height:26px;border-radius:50%;background:${p.avatarColor};flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;font:12px system-ui;color:#fff;`;
       dot.textContent = (p.handle || id).slice(0, 2).toUpperCase();
       row.appendChild(dot);
       if (expanded) {
         const nm = document.createElement("span");
         nm.style.cssText = "font:11px system-ui;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
-        nm.textContent = (p.handle || id).slice(0, 12) + (isMeRow ? " (yo)" : "");
+        nm.textContent = (p.handle || id) + (isMeRow ? " (yo)" : "");
         row.appendChild(nm);
       }
       row.onclick = () => {
