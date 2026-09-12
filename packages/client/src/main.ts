@@ -159,14 +159,13 @@ class WorldScene extends Phaser.Scene {
       this.pushDbg("tick:key:" + JSON.stringify(this.keyState));
     }
 
+    // Stale mouse target: keys take priority — drop it BEFORE computing tx,ty,
+    // otherwise the first tick while holding a key re-sends the old target.
+    if (this.target && (this.keyState.left || this.keyState.right || this.keyState.up || this.keyState.down)) {
+      this.target = null;
+    }
     if (this.target) {
       tx = this.target.x; ty = this.target.y;
-      // Mouse target expiry: if key is pressed, keys take priority and the
-      // stale target is dropped — otherwise a rejected/stuck target blocks
-      // arrow movement forever.
-      if (this.keyState.left || this.keyState.right || this.keyState.up || this.keyState.down) {
-        this.target = null;
-      }
     } else if (this.keyState.left) tx -= 1;
     else if (this.keyState.right) tx += 1;
     else if (this.keyState.up) ty -= 1;
