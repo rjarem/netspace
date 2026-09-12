@@ -173,7 +173,9 @@ class WorldScene extends Phaser.Scene {
       const far = Math.abs(p.sprite.x - wx) > TILE * 1.5 || Math.abs(p.sprite.y - wy) > TILE * 1.5;
       if (far) { p.sprite.x = wx; p.sprite.y = wy; }
       p.worldX = wx; p.worldY = wy;
-      p.label.x = p.sprite.x; p.label.y = p.sprite.y - TILE * 0.85;
+      const f = (p.sprite as any).faceRef;
+      if (f) { f.x = p.sprite.x; f.y = p.sprite.y; }
+      p.label.y = p.sprite.y - TILE * 0.85;
       if (
         this.movingTo &&
         Math.round(player.x) === this.movingTo.x &&
@@ -185,7 +187,7 @@ class WorldScene extends Phaser.Scene {
     } else {
       p.worldX = wx; p.worldY = wy;
       this.tweens.add({
-        targets: [p.sprite, p.label],
+        targets: [p.sprite, p.label, (p.sprite as any).faceRef].filter(Boolean),
         x: wx, y: wy,
         duration: 110,
         onUpdate: () => { p.label.x = p.sprite.x; p.label.y = p.sprite.y - TILE * 0.85; },
@@ -256,11 +258,14 @@ class WorldScene extends Phaser.Scene {
     const wx = tx * TILE + TILE / 2;
     const wy = ty * TILE + TILE / 2;
     this.tweens.add({
-      targets: [me.sprite, me.label],
+      targets: [me.sprite, me.label, (me.sprite as any).faceRef].filter(Boolean),
       x: wx, y: wy,
       duration: 120,
       ease: "Linear",
-      onUpdate: () => { me.label.x = me.sprite.x; me.label.y = me.sprite.y - TILE * 0.85; },
+      onUpdate: () => {
+        me.label.x = me.sprite.x; me.label.y = me.sprite.y - TILE * 0.85;
+        const f = (me.sprite as any).faceRef;
+        if (f) { f.x = me.sprite.x; f.y = me.sprite.y; }},
       onComplete: () => {
         me.worldX = wx; me.worldY = wy;
         this.moveLock = false;
@@ -551,6 +556,12 @@ class WorldScene extends Phaser.Scene {
     const wx = player.x * TILE + TILE / 2;
     const wy = player.y * TILE + TILE / 2;
     const sprite = this.add.rectangle(wx, wy, TILE * 0.7, TILE * 0.7, color, 1);
+    // Generic avatar placeholder: a happy face over the colored circle while the
+    // photo-avatar flow (camera snapshot at signup) is implemented.
+    const face = this.add.text(wx, wy, "🙂", { fontSize: `${Math.round(TILE * 0.55)}px` })
+      .setOrigin(0.5, 0.5);
+    (sprite as any).faceRef = face;
+    sprite.once(Phaser.GameObjects.Events.DESTROY, () => face.destroy());
     if (isMe) {
       sprite.setStrokeStyle(3, 0xffffff, 1);
       this.cameras.main.startFollow(sprite, true, 0.1, 0.1);
