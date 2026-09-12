@@ -761,6 +761,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       { font: "12px system-ui", color: "#fff", backgroundColor: "#00000088", padding: { x: 4, y: 2 } }
     ).setOrigin(0.5);
     const ui: PlayerUI = { sprite, label, handle: player.handle, worldX: wx, worldY: wy, avatarColor: colorHex };
+    (ui as any).schema = player;
     this.players.set(id, ui);
     // Schema 2.x: the players-map onChange does NOT fire on field updates —
     // per-player instance onChange is the reliable per-tick position signal.
@@ -804,6 +805,19 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       this.halo.setPosition(me.worldX, me.worldY);
     }
     this.updateBubbles();
+    // Poll fallback for remote positions (schema instance events unreliable across versions):
+    if (Date.now() - (this as any).pollT > 250) {
+      (this as any).pollT = Date.now();
+      for (const [id, p] of this.players) {
+        if (id === this.myId) continue;
+        const sp = (p as any).schema;
+        if (!sp) continue;
+        const sx2 = sp.x * TILE + TILE / 2, sy2 = sp.y * TILE + TILE / 2;
+        if (Math.abs(sx2 - p.worldX) > 1 || Math.abs(sy2 - p.worldY) > 1) {
+          this.onServerPosition(id, sp);
+        }
+      }
+    }
     this.updateSpatialAudio();
     try { this.renderMinimap(); } catch (e) { console.warn("[minimap]", e); }
     try { this.renderUserList(); } catch (e) { console.warn("[userlist]", e); }
