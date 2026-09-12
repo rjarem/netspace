@@ -539,7 +539,6 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     // throttle DOM rebuild to 1/s
     if (this.ulLast && Date.now() - this.ulLast < 1000) return;
     this.ulLast = Date.now();
-    ul.innerHTML = "";
     // group players: cluster by AUDIO_MAX_RADIUS adjacency (BFS over close pairs)
     const ids = [...this.players.keys()].filter((i) => i !== this.myId);
     const groups: string[][] = [];
@@ -565,6 +564,11 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       return Phaser.Math.Distance.Between(me.worldX, me.worldY, p.worldX, p.worldY) <= AUDIO_MAX_RADIUS * TILE;
     })) : undefined;
     groups.sort((g1, g2) => (g2 === myGroup ? 1 : 0) - (g1 === myGroup ? 1 : 0));
+    // Skip rebuild when nothing user-visible changed (prevents killing in-flight taps)
+    const sig = groups.map((g) => g.map((id) => id + ":" + Math.round((this.players.get(id)?.worldX || 0) / TILE) + "," + Math.round((this.players.get(id)?.worldY || 0) / TILE)).join("|")).join(";");
+    if ((ul as any)._sig === sig && ul.childElementCount > 0) return;
+    (ul as any)._sig = sig;
+    ul.innerHTML = "";
     // render: thin by default (initials avatars); expand on hover/click
     const expanded = ul.dataset.exp === "1";
     const mk = (id: string, isMeRow: boolean) => {
@@ -588,12 +592,17 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
         row.appendChild(nm);
       }
       (row as any)._jump = () => {
-        const cam = this.cameras.main;
-        cam.stopFollow();
-        cam.pan(p.sprite.x, p.sprite.y, 400, "Sine", true, () => {
-          const me2 = this.players.get(this.myId);
-          if (me2) cam.startFollow(me2.sprite, true, 0.1, 0.1);
-        });
+        try {
+          const cam = this.cameras.main;
+          cam.stopFollow();
+          const tx = p.sprite.x, ty = p.sprite.y;
+          cam.pan(tx, ty, 400, "Sine", true, () => {
+            const me2 = this.players.get(this.myId);
+            if (me2) cam.startFollow(me2.sprite, true, 0.1, 0.1);
+          });
+          const st = document.getElementById("status");
+          if (st) { st.textContent = "🎯 " + p.handle; setTimeout(() => this.updateVoiceStatus(), 900); }
+        } catch (err) { console.warn("[jump]", err); this.pushDbg("jump-err"); }
       };
       row.onclick = (row as any)._jump;
       ul.appendChild(row);
@@ -709,8 +718,9 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     const zoom = cam.zoom;
     for (const p of this.players.values()) {
       if (!p.bubble) continue;
-      const sx = (p.sprite.x - cam.scrollX) * zoom;
-      const sy = (p.sprite.y - cam.scrollY) * zoom;
+      const view = cam.worldView; // exact rendered viewport (accounts for follow lerp/effects)
+      const sx = (p.sprite.x - view.x) * zoom;
+      const sy = (p.sprite.y - view.y) * zoom;
       const sz = Math.round(84 * zoom);
       p.bubble.style.width = sz + "px";
       p.bubble.style.height = sz + "px";
