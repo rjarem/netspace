@@ -839,6 +839,17 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     // Poll fallback for remote positions (schema instance events unreliable across versions):
     if (Date.now() - (this as any).pollT > 250) {
       (this as any).pollT = Date.now();
+      // Reconcile roster: add players who joined but whose onAdd never fired,
+      // and drop ghosts whose onRemove never fired (schema events unreliable).
+      try {
+        const st = (this.room?.state?.players || new Map()) as Map<string, any>;
+        for (const [rid, sp] of st) {
+          if (!this.players.has(rid)) this.addPlayer(rid, sp);
+        }
+        for (const id of [...this.players.keys()]) {
+          if (id !== this.myId && !st.has(id)) this.removePlayer(id);
+        }
+      } catch (e) { console.warn("[roster]", e); }
       for (const [id, p] of this.players) {
         if (id === this.myId) continue;
         const sp = (p as any).schema;
