@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { Client, Room } from "colyseus.js";
 
 const TILE = 32;
+const APP_VERSION = "v23-sync-poll";
 // Proximity radii (mirror shared constants — kept in sync manually)
 const AUDIO_RADIUS = 5;
 const AUDIO_MAX_RADIUS = 8;
@@ -430,7 +431,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     const st = document.getElementById("status");
     if (!st) return;
     const n = this.lkRoom?.remoteParticipants.size ?? 0;
-    const base = "✅ Conectado — click o flechas para moverte";
+    const base = "✅ " + APP_VERSION + " — conectado";
     st.textContent = n > 0 ? `${base} | 🎙️ ${n} en voz` : base;
   }
 
@@ -572,6 +573,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       row.title = p.handle || id;
       row.style.cssText = "display:flex;align-items:center;gap:6px;padding:4px;cursor:pointer;border-radius:8px;user-select:none;-webkit-user-select:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
       row.addEventListener("pointerdown", (e) => e.preventDefault());
+      row.addEventListener("pointerup", (e) => { e.preventDefault(); (row as any)._jump && (row as any)._jump(); });
       // Pill button with the handle (first word, max 8 chars) — much more intuitive than initials
       const full = (p.handle || id).trim();
       const short = (full.split(/\s+/)[0] || full).slice(0, 8);
@@ -585,7 +587,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
         nm.textContent = (p.handle || id) + (isMeRow ? " (yo)" : "");
         row.appendChild(nm);
       }
-      row.onclick = () => {
+      (row as any)._jump = () => {
         const cam = this.cameras.main;
         cam.stopFollow();
         cam.pan(p.sprite.x, p.sprite.y, 400, "Sine", true, () => {
@@ -593,6 +595,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
           if (me2) cam.startFollow(me2.sprite, true, 0.1, 0.1);
         });
       };
+      row.onclick = (row as any)._jump;
       ul.appendChild(row);
     };
     if (me) mk(this.myId, true);
@@ -708,7 +711,10 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       if (!p.bubble) continue;
       const sx = (p.sprite.x - cam.scrollX) * zoom;
       const sy = (p.sprite.y - cam.scrollY) * zoom;
-      p.bubble.style.transform = `translate3d(${sx - 42}px,${sy - 42}px,0)`;
+      const sz = Math.round(84 * zoom);
+      p.bubble.style.width = sz + "px";
+      p.bubble.style.height = sz + "px";
+      p.bubble.style.transform = `translate3d(${sx - sz / 2}px,${sy - sz / 2}px,0)`;
       // video visible only when actually streaming
       if (p.video && p.video.srcObject) p.video.style.display = "";
       else if (p.video) p.video.style.display = "none";
