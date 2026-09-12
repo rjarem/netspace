@@ -8,14 +8,15 @@ const AUDIO_MAX_RADIUS = 8;
 
 // Client-side copy of restricted zones + walls (mirrors server world.ts).
 // Attendee is the dev default role; zones list which roles may enter.
+// Mirrors server world.ts (128x64). KEEP IN SYNC — better: fetch from server state in the future.
 const RESTRICTED_ZONES = [
-  { x: 15, y: 2, w: 10, h: 5, allowed: ["admin", "speaker"] },          // Main Stage
-  { x: 6, y: 14, w: 5, h: 4, allowed: ["admin", "speaker", "panelist"] }, // Round Table
-  { x: 26, y: 6, w: 8, h: 6, allowed: ["admin", "speaker", "dj"] },      // DJ Lounge
+  { x: 40, y: 3, w: 24, h: 10, allowed: ["admin", "speaker"] },             // Main Stage
+  { x: 14, y: 30, w: 10, h: 8, allowed: ["admin", "speaker", "panelist"] }, // Round Table
+  { x: 84, y: 8, w: 18, h: 12, allowed: ["admin", "speaker", "dj"] },       // DJ Lounge
 ];
 const WALLY = (x: number, y: number) =>
-  y === 0 || y === 29 || x === 0 || x === 39 ||
-  (x === 14 && y >= 5 && y < 12) || (x === 30 && y >= 18 && y < 24);
+  y === 0 || y === 63 || x === 0 || x === 127 ||
+  (x === 40 && y >= 8 && y < 18) || (x === 88 && y >= 34 && y < 48);
 
 function tileBlocked(x: number, y: number): boolean {
   if (WALLY(x, y)) return true;
@@ -58,6 +59,7 @@ class WorldScene extends Phaser.Scene {
   // T3: strict grid movement — one tile in flight at a time
   moveLock = false;
   movingTo: { x: number; y: number } | null = null;
+  lockAt = 0;
   halo!: Phaser.GameObjects.Arc;
 
   constructor() { super("world"); }
@@ -270,7 +272,11 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
         this.moveLock = false; this.movingTo = null;
       }
     }
-    if (this.moveLock) return;
+    if (this.moveLock) {
+      // Hard watchdog: never allow a stuck lock to freeze navigation.
+      if (Date.now() - (this.lockAt || 0) > 450) { this.moveLock = false; this.movingTo = null; }
+      else return;
+    }
     const me = this.players.get(this.myId);
     if (!me) return;
 
@@ -287,12 +293,16 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     if (this.target) {
       const dx = Math.sign(this.target.x - cur.x);
       const dy = Math.sign(this.target.y - cur.y);
-      // Step along the dominant axis toward the mouse target
       if (dx !== 0 || dy !== 0) {
-        if (Math.abs(this.target.x - cur.x) >= Math.abs(this.target.y - cur.y)) {
+        if (dx !== 0 && dy !== 0 && !tileBlocked(cur.x + dx, cur.y + dy)) {
+          // Prefer diagonal steps: walks a straight line toward the click point.
+          dir = { dx, dy };
+        } else if (dx !== 0 && !tileBlocked(cur.x + dx, cur.y)) {
           dir = { dx, dy: 0 };
-        } else {
+        } else if (dy !== 0 && !tileBlocked(cur.x, cur.y + dy)) {
           dir = { dx: 0, dy };
+        } else {
+          this.target = null; // fully blocked; give up on this target
         }
       } else {
         this.target = null; // arrived
@@ -307,6 +317,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     if (tileBlocked(nx, ny)) return; // client-side pre-check; server still validates
 
     this.moveLock = true;
+    this.lockAt = Date.now();
     this.movingTo = { x: nx, y: ny };
     this.room.send("move", { x: nx, y: ny });
     // Colyseus does NOT echo own-schema changes to the sender, so the server
