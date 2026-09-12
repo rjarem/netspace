@@ -61,6 +61,7 @@ class WorldScene extends Phaser.Scene {
   moveLock = false;
   movingTo: { x: number; y: number } | null = null;
   lockAt = 0;
+  jumpHoldUntil = 0;
   halo!: Phaser.GameObjects.Arc;
 
   constructor() { super("world"); }
@@ -321,6 +322,14 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     this.lockAt = Date.now();
     this.movingTo = { x: nx, y: ny };
     this.room.send("move", { x: nx, y: ny });
+    // If camera is parked on another player (after pill jump), snap follow back to me.
+    if (this.jumpHoldUntil) {
+      this.jumpHoldUntil = 0;
+      const cam = this.cameras.main;
+      cam.stopFollow();
+      const me2 = this.players.get(this.myId);
+      if (me2) { cam.centerOn(me2.worldX, me2.worldY); cam.startFollow(me2.sprite, true, 0.1, 0.1); }
+    }
     // Colyseus does NOT echo own-schema changes to the sender, so the server
     // onChange will NOT fire for us. Animate optimistically tile→tile and
     // unlock when the animation completes. If the server rejects the move
@@ -596,10 +605,9 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
           const cam = this.cameras.main;
           cam.stopFollow();
           const tx = p.sprite.x, ty = p.sprite.y;
-          cam.pan(tx, ty, 400, "Sine", true, () => {
-            const me2 = this.players.get(this.myId);
-            if (me2) cam.startFollow(me2.sprite, true, 0.1, 0.1);
-          });
+          // Fly to target and STAY there; follow resumes when I move or after 4s of idle.
+          this.jumpHoldUntil = Date.now() + 4000;
+          cam.pan(tx, ty, 400, "Sine", true);
           const st = document.getElementById("status");
           if (st) { st.textContent = "🎯 " + p.handle; setTimeout(() => this.updateVoiceStatus(), 900); }
         } catch (err) { console.warn("[jump]", err); this.pushDbg("jump-err"); }
@@ -819,6 +827,13 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     const me = this.players.get(this.myId);
     if (me) {
       this.halo.setPosition(me.worldX, me.worldY);
+    }
+    if (me && this.jumpHoldUntil && Date.now() > this.jumpHoldUntil) {
+      this.jumpHoldUntil = 0;
+      const cam = this.cameras.main;
+      cam.stopFollow();
+      cam.centerOn(me.worldX, me.worldY);
+      cam.startFollow(me.sprite, true, 0.1, 0.1);
     }
     this.updateBubbles();
     // Poll fallback for remote positions (schema instance events unreliable across versions):
