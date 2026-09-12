@@ -38,6 +38,7 @@ const audioNodes: Map<string, AudioNode> = new Map();
 interface PlayerUI {
   sprite: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
+  handle: string;
   worldX: number; // world px (tile center)
   worldY: number;
   bubble?: HTMLDivElement;   // video bubble overlay (T1)
@@ -127,7 +128,6 @@ class WorldScene extends Phaser.Scene {
 
       room.state.players.onAdd((player: any, id: string) => this.addPlayer(id, player));
       room.state.players.onRemove((_: any, id: string) => this.removePlayer(id));
-      room.state.players.onChange((player: any, id: string) => this.onServerPosition(id, player));
 
       room.onMessage("proximity", (data: Record<string, Record<string, number>>) => {
         this.proximity = data[this.myId] || {};
@@ -459,7 +459,7 @@ class WorldScene extends Phaser.Scene {
     // Name tag under the bubble
     const name = document.createElement("div");
     name.style.cssText = "position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);font:11px system-ui;color:#fff;background:#000000aa;padding:1px 6px;border-radius:4px;white-space:nowrap;";
-    name.textContent = identity.slice(0, 14);
+    name.textContent = (p.handle || identity).slice(0, 14);
     b.appendChild(name);
     this.bubbleLayer().appendChild(b);
     p.bubble = b;
@@ -540,11 +540,27 @@ class WorldScene extends Phaser.Scene {
       wx, wy - TILE * 0.85, player.handle + (isMe ? " (yo)" : ""),
       { font: "12px system-ui", color: "#fff", backgroundColor: "#00000088", padding: { x: 4, y: 2 } }
     ).setOrigin(0.5);
-    this.players.set(id, { sprite, label, worldX: wx, worldY: wy, avatarColor: colorHex });
+    const ui: PlayerUI = { sprite, label, handle: player.handle, worldX: wx, worldY: wy, avatarColor: colorHex };
+    this.players.set(id, ui);
+    // Schema 2.x: the players-map onChange does NOT fire on field updates —
+    // per-player instance onChange is the reliable per-tick position signal.
+    if (player.onChange) {
+      player.onChange(() => {
+        const cur = this.players.get(id);
+        if (cur) this.onPlayerInstanceChange(id, player);
+      });
+    }
     if (isMe) {
       // My bubble: colored circle immediately; video attaches when cam publishes
-      this.ensureBubble(this.players.get(id)!, id);
+      this.ensureBubble(ui, id);
     }
+  }
+
+  /** Per-field update for any player (fires for BOTH self and remotes in schema 2.x). */
+  onPlayerInstanceChange(id: string, player: any) {
+    // Position handled here; skip for self (optimistic tween owns the sprite)
+    if (id !== this.myId) this.onServerPosition(id, player);
+    // handle/avatar-style changes would also land here
   }
 
   removePlayer(id: string) {
