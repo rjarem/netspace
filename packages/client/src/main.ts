@@ -471,7 +471,13 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
   }
 
   /** Per-frame spatial audio: update gain/pan from avatar distances. */
+  private subThrottle = 0;
   updateSpatialAudio() {
+    // Re-evaluate proximity subscriptions periodically (players move!)
+    if (Date.now() - this.subThrottle > 500) {
+      this.subThrottle = Date.now();
+      try { this.updateSubscriptions(); } catch { /* room not ready */ }
+    }
     const me = this.players.get(this.myId);
     if (!me) return;
     for (const [id, p] of this.players) {
