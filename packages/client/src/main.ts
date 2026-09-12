@@ -302,9 +302,16 @@ class WorldScene extends Phaser.Scene {
         if (track.kind === "video") this.removeRemoteVideo(participant.identity);
         this.updateVoiceStatus();
       });
+      room.on(RoomEvent.LocalTrackPublished, (pub: any) => {
+        if (pub.kind === "video") this.showLocalPreview(pub);
+      });
       await room.connect(msg.url, msg.token);
       this.lkRoom = room;
       this.pushDbg("voice-ok:" + msg.zoneId);
+      // If camera was already published (rejoin), attach now
+      for (const pub of room.localParticipant.trackPublications.values()) {
+        if (pub.kind === "video" && pub.track) this.showLocalPreview(pub);
+      }
       // Already-subscribed tracks (e.g. on rejoin)
       for (const p of room.remoteParticipants.values()) {
         for (const pub of p.trackPublications.values()) {
@@ -360,13 +367,25 @@ class WorldScene extends Phaser.Scene {
     // mute-attach a hidden element to keep the MediaStream alive in some browsers.
     try {
       const ctx = new AudioContext();
-      await_ok: {
-        const source = ctx.createMediaStreamSource(track.mediaStream);
-        const gain = ctx.createGain();
-        const panner = ctx.createStereoPanner();
-        source.connect(gain).connect(panner).connect(ctx.destination);
-        p.audioNode = { ctx, gain, panner };
-      }
+      // Chrome/Safari create the context SUSPENDED until a user gesture — resume now
+      // and also on the next pointer/keydown as a belt-and-braces.
+      const resume = () => { if (ctx.state === "suspended") ctx.resume().catch(() => {}); };
+      resume();
+      window.addEventListener("pointerdown", resume, { once: true });
+      window.addEventListener("keydown", resume, { once: true });
+      // Keep the MediaStream alive: muted hidden element (Chrome mutes WebAudio-only streams
+      // in some versions when no element is attached).
+      const keepAlive = document.createElement("audio");
+      keepAlive.muted = true;
+      keepAlive.autoplay = true;
+      document.body.appendChild(keepAlive);
+      try { track.attach(keepAlive); } catch { /* attach optional */ }
+      const source = ctx.createMediaStreamSource(track.mediaStream);
+      const gain = ctx.createGain();
+      const panner = ctx.createStereoPanner();
+      source.connect(gain).connect(panner).connect(ctx.destination);
+      p.audioNode = { ctx, gain, panner };
+      p.audioEl = keepAlive; // cleaned up in removePlayer
     } catch (err) {
       console.warn("[audio] WebAudio failed, falling back to element:", err);
       const a = document.createElement("audio");
