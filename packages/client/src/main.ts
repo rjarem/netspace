@@ -599,7 +599,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
           const gx = Math.round((p.worldX - TILE / 2) / TILE);
           const gy = Math.round((p.worldY - TILE / 2) / TILE);
           // find walkable tile adjacent to target (or the tile itself)
-          const cand: Array<[number, number]> = [[gx, gy], [gx + 1, gy], [gx - 1, gy], [gx, gy + 1], [gx, gy - 1], [gx + 1, gy + 1], [gx - 1, gy - 1], [gx + 1, gy - 1], [gx - 1, gy + 1]];
+          const cand: Array<[number, number]> = [[gx + 1, gy], [gx - 1, gy], [gx, gy + 1], [gx, gy - 1], [gx + 1, gy + 1], [gx - 1, gy - 1], [gx + 1, gy - 1], [gx - 1, gy + 1], [gx, gy]];
           let dest: [number, number] | null = null;
           for (const c of cand) { if (!tileBlocked(c[0], c[1])) { dest = c; break; } }
           if (!dest) return;
