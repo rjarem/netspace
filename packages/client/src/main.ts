@@ -2,6 +2,9 @@ import Phaser from "phaser";
 import { Client, Room } from "colyseus.js";
 
 const TILE = 32;
+// Proximity radii (mirror shared constants — kept in sync manually)
+const AUDIO_RADIUS = 5;
+const AUDIO_MAX_RADIUS = 8;
 
 // Client-side copy of restricted zones + walls (mirrors server world.ts).
 // Attendee is the dev default role; zones list which roles may enter.
@@ -15,19 +18,33 @@ const WALLY = (x: number, y: number) =>
   (x === 14 && y >= 5 && y < 12) || (x === 30 && y >= 18 && y < 24);
 
 function tileBlocked(x: number, y: number): boolean {
-  const tx = Math.floor(x), ty = Math.floor(y);
-  if (WALLY(tx, ty)) return true;
+  if (WALLY(x, y)) return true;
   for (const z of RESTRICTED_ZONES) {
-    if (tx >= z.x && tx < z.x + z.w && ty >= z.y && ty < z.y + z.h) {
+    if (x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h) {
       if (!z.allowed.includes("attendee")) return true;
     }
   }
   return false;
 }
 
+// LiveKit audio-node registry: Web Audio gain+pan per remote identity (T2)
+interface AudioNode {
+  ctx: AudioContext;
+  gain: GainNode;
+  panner: StereoPannerNode;
+}
+const audioNodes: Map<string, AudioNode> = new Map();
+
 interface PlayerUI {
   sprite: Phaser.GameObjects.Rectangle;
   label: Phaser.GameObjects.Text;
+  worldX: number; // world px (tile center)
+  worldY: number;
+  bubble?: HTMLDivElement;   // video bubble overlay (T1)
+  video?: HTMLVideoElement;
+  audioEl?: HTMLAudioElement; // muted fallback element for remote audio
+  audioNode?: AudioNode;      // Web Audio chain when available
+  avatarColor: string;
 }
 
 class WorldScene extends Phaser.Scene {
@@ -36,8 +53,11 @@ class WorldScene extends Phaser.Scene {
   players: Map<string, PlayerUI> = new Map();
   cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   target: { x: number; y: number } | null = null;
-  proximity: Record<string, number> = {};
   tickInterval: any = null;
+  // T3: strict grid movement — one tile in flight at a time
+  moveLock = false;
+  movingTo: { x: number; y: number } | null = null;
+  halo!: Phaser.GameObjects.Arc;
 
   constructor() { super("world"); }
 
@@ -49,11 +69,15 @@ class WorldScene extends Phaser.Scene {
     const g = this.add.graphics();
     g.lineStyle(1, 0x232838, 1);
     for (let x = 0; x <= mapW; x++) g.lineBetween(x * TILE, 0, x * TILE, mapH * TILE);
-    for (let y = 0; y <= mapH; y++) g.lineBetween(0, y * TILE, mapW * TILE, y * TILE);
+    for (let y = 0; y <= mapH; y++) g.lineBetween(0, y * TILE, mapW * TILE, mapH * TILE);
 
     drawZone(this, 15, 2, 10, 5, "Main Stage", 0x7c4dff, 0.25);
     drawZone(this, 6, 14, 5, 4, "Round Table", 0x00bfa5, 0.25);
     drawZone(this, 26, 6, 8, 6, "DJ Lounge", 0xff5251, 0.25);
+
+    // T1: halo = own proximity radius (audible/visible range)
+    this.halo = this.add.circle(0, 0, AUDIO_MAX_RADIUS * TILE, 0x4f7cff, 0.05);
+    this.halo.setStrokeStyle(2, 0x4f7cff, 0.35);
 
     this.cursors = this.input.keyboard!.createCursorKeys();
 
@@ -66,9 +90,7 @@ class WorldScene extends Phaser.Scene {
       const dir = map[k];
       if (!dir) return;
       if (down) {
-        // Exclusive: pressing a new arrow releases the previous one. Missed
-        // keyup events (alt-tab, browser quirks) otherwise leave a stale
-        // direction stuck true and the else-if chain moves the WRONG way.
+        // Exclusive: pressing a new arrow releases the previous one.
         this.keyState = { left: false, right: false, up: false, down: false, [dir]: true } as any;
       } else {
         (this.keyState as any)[dir] = false;
@@ -77,9 +99,6 @@ class WorldScene extends Phaser.Scene {
     };
     window.addEventListener("keydown", (e) => setKey(e, true));
     window.addEventListener("keyup", (e) => setKey(e, false));
-    // Phaser's own cursor-key listeners can capture/consume arrow keys via its
-    // keyboard plugin (and capture) without ours firing state changes — disable
-    // capture so arrows always reach the DOM listeners above.
     this.input.keyboard!.disableGlobalCapture();
     window.addEventListener("blur", () => {
       this.keyState = { left: false, right: false, up: false, down: false };
@@ -108,11 +127,12 @@ class WorldScene extends Phaser.Scene {
 
       room.state.players.onAdd((player: any, id: string) => this.addPlayer(id, player));
       room.state.players.onRemove((_: any, id: string) => this.removePlayer(id));
-      room.state.players.onChange((player: any, id: string) => this.movePlayer(id, player));
+      room.state.players.onChange((player: any, id: string) => this.onServerPosition(id, player));
 
       room.onMessage("proximity", (data: Record<string, Record<string, number>>) => {
         this.proximity = data[this.myId] || {};
         this.updateProximityVisuals();
+        this.updateSubscriptions(); // T4: subscribe only to nearby video/audio
       });
       room.onMessage("livekit", (msg: any) => {
         console.log("[livekit]", msg.isViewer ? "viewer" : "publisher", msg.zoneId);
@@ -122,7 +142,7 @@ class WorldScene extends Phaser.Scene {
 
       this.tickInterval = setInterval(() => this.tick(), 120);
       const st = document.getElementById("status");
-      if (st) st.textContent = "✅ Conectado — click para moverte";
+      if (st) st.textContent = "✅ Conectado — click o flechas para moverte";
       // Debug handle for headless/server-side diagnostics
       (window as any).__ns = {
         scene: this,
@@ -135,60 +155,85 @@ class WorldScene extends Phaser.Scene {
     }
   }
 
-  /** Optimistic local draw, mirrors server clamping (borders) + walls. */
-  drawOptimistic(me: any, tx: number, ty: number) {
-    const clx = Math.max(1, Math.min(38, Math.round(tx)));
-    const cly = Math.max(1, Math.min(28, Math.round(ty)));
-    if (tileBlocked(clx, cly)) return;
-    me.sprite.x = clx * TILE + TILE / 2;
-    me.sprite.y = cly * TILE + TILE / 2;
-    me.label.x = me.sprite.x;
-    me.label.y = me.sprite.y - TILE * 0.85;
+  // ---- T3: strict tile movement ----
+
+  /**
+   * Server position change. For the LOCAL player this is the authoritative echo:
+   * set position directly (no tween) and release the move lock when the tile we
+   * sent has been reached. For remote players, tween smoothly.
+   */
+  onServerPosition(id: string, player: any) {
+    const p = this.players.get(id);
+    if (!p) return;
+    const wx = player.x * TILE + TILE / 2;
+    const wy = player.y * TILE + TILE / 2;
+    if (id === this.myId) {
+      p.worldX = wx; p.worldY = wy;
+      p.sprite.x = wx; p.sprite.y = wy;
+      p.label.x = wx; p.label.y = wy - TILE * 0.85;
+      if (
+        this.movingTo &&
+        Math.round(player.x) === this.movingTo.x &&
+        Math.round(player.y) === this.movingTo.y
+      ) {
+        this.moveLock = false;
+        this.movingTo = null;
+      }
+    } else {
+      p.worldX = wx; p.worldY = wy;
+      this.tweens.add({
+        targets: [p.sprite, p.label],
+        x: wx, y: wy,
+        duration: 110,
+        onUpdate: () => { p.label.x = p.sprite.x; p.label.y = p.sprite.y - TILE * 0.85; },
+      });
+    }
   }
 
   tick() {
-    if (!this.room) return;
+    if (!this.room || this.moveLock) return;
     const me = this.players.get(this.myId);
-    if (!me) {
-      this.pushDbg("tick:no-me:" + this.myId);
-      return;
-    }
-    const px = me.sprite.x / TILE, py = me.sprite.y / TILE;
-    let tx = px, ty = py;
-    if (this.keyState.left || this.keyState.right || this.keyState.up || this.keyState.down) {
-      this.pushDbg("tick:key:" + JSON.stringify(this.keyState));
-    }
+    if (!me) return;
 
-    // Stale mouse target: keys take priority — drop it BEFORE computing tx,ty,
-    // otherwise the first tick while holding a key re-sends the old target.
-    if (this.target && (this.keyState.left || this.keyState.right || this.keyState.up || this.keyState.down)) {
-      this.target = null;
-    }
+    // Current tile = integer tile the server last confirmed for me.
+    const cur = {
+      x: Math.round((me.worldX - TILE / 2) / TILE),
+      y: Math.round((me.worldY - TILE / 2) / TILE),
+    };
+
+    let dir: { dx: number; dy: number } | null = null;
+    const keysActive = this.keyState.left || this.keyState.right || this.keyState.up || this.keyState.down;
+    if (keysActive && this.target) this.target = null; // keys override stale mouse target
+
     if (this.target) {
-      tx = this.target.x; ty = this.target.y;
-    } else if (this.keyState.left) tx -= 1;
-    else if (this.keyState.right) tx += 1;
-    else if (this.keyState.up) ty -= 1;
-    else if (this.keyState.down) ty += 1;
+      const dx = Math.sign(this.target.x - cur.x);
+      const dy = Math.sign(this.target.y - cur.y);
+      // Step along the dominant axis toward the mouse target
+      if (dx !== 0 || dy !== 0) {
+        if (Math.abs(this.target.x - cur.x) >= Math.abs(this.target.y - cur.y)) {
+          dir = { dx, dy: 0 };
+        } else {
+          dir = { dx: 0, dy };
+        }
+      } else {
+        this.target = null; // arrived
+      }
+    } else if (this.keyState.left) dir = { dx: -1, dy: 0 };
+    else if (this.keyState.right) dir = { dx: 1, dy: 0 };
+    else if (this.keyState.up) dir = { dx: 0, dy: -1 };
+    else if (this.keyState.down) dir = { dx: 0, dy: 1 };
     else return;
 
-    // Arrow movement is relative to the SERVER position, not the local optimistic
-    // sprite — otherwise optimistic mouse moves desync and keys appear dead.
-    const sx = me.sprite.x / TILE, sy = me.sprite.y / TILE;
-    if (this.target === null && (Math.abs(sx - tx) > 0.6 || Math.abs(sy - ty) > 0.6)) {
-      // sprite drifted from server pos; snap back so arrows resume from truth
-      me.sprite.x = Math.round(px) * TILE + TILE / 2;
-      me.sprite.y = Math.round(py) * TILE + TILE / 2;
-    }
+    const nx = cur.x + dir!.dx, ny = cur.y + dir!.dy;
+    if (tileBlocked(nx, ny)) return; // client-side pre-check; server still validates
 
-    this.room.send("move", { x: Math.round(tx), y: Math.round(ty) });
-    // Optimistic local move ONLY if the target tile is legal (mirrors server rules).
-    // Own schema changes don't echo back to the sender, so we draw locally.
-    this.drawOptimistic(me, tx, ty);
-    if (this.target && Math.abs(px - tx) < 0.1 && Math.abs(py - ty) < 0.1) this.target = null;
+    this.moveLock = true;
+    this.movingTo = { x: nx, y: ny };
+    this.room.send("move", { x: nx, y: ny });
   }
 
   keyState: { left: boolean; right: boolean; up: boolean; down: boolean } = { left: false, right: false, up: false, down: false };
+  proximity: Record<string, number> = {};
 
   /** Append to the window.__ns debug ring buffer (headless diagnostics). */
   pushDbg(s: string) {
@@ -211,34 +256,27 @@ class WorldScene extends Phaser.Scene {
       if (this.lkRoom) { await this.lkRoom.disconnect(); this.lkRoom = null; }
       const { Room, RoomEvent } = await import("livekit-client");
       const room = new Room({ adaptiveStream: true, dynacast: true });
-      room.on(RoomEvent.TrackSubscribed, () => this.updateVoiceStatus());
-      room.on(RoomEvent.TrackUnsubscribed, () => this.updateVoiceStatus());
+      room.on(RoomEvent.TrackSubscribed, (track: any, pub: any, participant: any) => {
+        if (track.kind === "audio") this.onRemoteAudio(participant.identity, track);
+        else if (track.kind === "video") this.onRemoteVideo(participant.identity, track);
+        this.updateVoiceStatus();
+      });
+      room.on(RoomEvent.TrackUnsubscribed, (track: any, pub: any, participant: any) => {
+        if (track.kind === "video") this.removeRemoteVideo(participant.identity);
+        this.updateVoiceStatus();
+      });
       await room.connect(msg.url, msg.token);
       this.lkRoom = room;
       this.pushDbg("voice-ok:" + msg.zoneId);
-      // Render remote participants: audio plays, video shows in a floating tile
-      room.on(RoomEvent.TrackSubscribed, (track: any, pub: any, participant: any) => {
-        if (track.kind === "audio") track.attach();
-        else if (track.kind === "video") this.showRemoteVideo(participant.identity, track);
-        this.updateVoiceStatus();
-      });
-      room.on(RoomEvent.TrackUnsubscribed, (track: any) => {
-        if (track.kind === "video") this.removeRemoteVideo(track);
-        this.updateVoiceStatus();
-      });
       // Already-subscribed tracks (e.g. on rejoin)
       for (const p of room.remoteParticipants.values()) {
         for (const pub of p.trackPublications.values()) {
           if (pub.isSubscribed && pub.track) {
-            if (pub.track.kind === "audio") pub.track.attach();
-            else this.showRemoteVideo(p.identity, pub.track);
+            if (pub.track.kind === "audio") this.onRemoteAudio(p.identity, pub.track);
+            else this.onRemoteVideo(p.identity, pub.track);
           }
         }
       }
-      // Local self-preview (bottom-left)
-      room.on(RoomEvent.LocalTrackPublished, (pub: any) => {
-        if (pub.track?.kind === "video") this.showLocalPreview(pub.track);
-      });
       // Publish mic audio (browser will prompt for permission the first time)
       try {
         await room.localParticipant.setMicrophoneEnabled(true);
@@ -267,79 +305,184 @@ class WorldScene extends Phaser.Scene {
     const st = document.getElementById("status");
     if (!st) return;
     const n = this.lkRoom?.remoteParticipants.size ?? 0;
-    const base = "✅ Conectado — click para moverte";
+    const base = "✅ Conectado — click o flechas para moverte";
     st.textContent = n > 0 ? `${base} | 🎙️ ${n} en voz` : base;
   }
 
-  /** Floating video overlay container (top-right). */
-  videoLayer(): HTMLElement {
-    let layer = document.getElementById("videoLayer") as HTMLElement | null;
+  // ---- T2: spatial audio via Web Audio API (gain + stereo pan) ----
+
+  onRemoteAudio(identity: string, track: any) {
+    const p = this.players.get(identity);
+    if (!p) {
+      // participant may not have a sprite yet; stash and retry on render loop
+      setTimeout(() => this.onRemoteAudio(identity, track), 300);
+      return;
+    }
+    // Web Audio chain: source → gain (distance falloff) → stereo panner → out.
+    // The track is NOT attached to a playing element (double audio); instead we
+    // mute-attach a hidden element to keep the MediaStream alive in some browsers.
+    try {
+      const ctx = new AudioContext();
+      await_ok: {
+        const source = ctx.createMediaStreamSource(track.mediaStream);
+        const gain = ctx.createGain();
+        const panner = ctx.createStereoPanner();
+        source.connect(gain).connect(panner).connect(ctx.destination);
+        p.audioNode = { ctx, gain, panner };
+      }
+    } catch (err) {
+      console.warn("[audio] WebAudio failed, falling back to element:", err);
+      const a = document.createElement("audio");
+      a.autoplay = true;
+      document.body.appendChild(a);
+      track.attach(a);
+      p.audioEl = a;
+    }
+    this.pushDbg("audio-remote:" + identity);
+  }
+
+  /** Per-frame spatial audio: update gain/pan from avatar distances. */
+  updateSpatialAudio() {
+    const me = this.players.get(this.myId);
+    if (!me) return;
+    for (const [id, p] of this.players) {
+      if (id === this.myId) continue;
+      const dist = Phaser.Math.Distance.Between(me.worldX, me.worldY, p.worldX, p.worldY) / TILE;
+      const vol = dist <= AUDIO_RADIUS ? 1.0
+        : dist >= AUDIO_MAX_RADIUS ? 0.0
+        : 1.0 - (dist - AUDIO_RADIUS) / (AUDIO_MAX_RADIUS - AUDIO_RADIUS);
+      // Stereo pan: normalized horizontal offset (±1 at the pan range)
+      const dx = (p.worldX - me.worldX) / (AUDIO_MAX_RADIUS * TILE);
+      const pan = Math.max(-1, Math.min(1, dx));
+      if (p.audioNode) {
+        p.audioNode.gain.gain.value = vol;
+        p.audioNode.panner.pan.value = pan;
+      } else if (p.audioEl) {
+        (p.audioEl as any).volume = vol;
+      }
+      // Sprite ring brightness tracks audible proximity too
+      p.sprite.setStrokeStyle(Math.round(vol * 3), 0xffffff, Math.min(1, vol * 1.5));
+    }
+  }
+
+  // ---- T1: video bubbles over avatars ----
+
+  /** Fullscreen overlay layer that tracks Phaser world coordinates. */
+  bubbleLayer(): HTMLElement {
+    let layer = document.getElementById("bubbleLayer") as HTMLElement | null;
     if (!layer) {
       layer = document.createElement("div");
-      layer.id = "videoLayer";
-      layer.style.cssText = "position:fixed;top:10px;right:10px;display:flex;flex-direction:column;gap:8px;z-index:1000;";
+      layer.id = "bubbleLayer";
+      layer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:900;overflow:hidden;";
       document.body.appendChild(layer);
     }
     return layer;
   }
 
-  /** Show a remote participant's video tile. */
-  showRemoteVideo(identity: string, track: any) {
-    const tileId = "vid-" + identity;
-    let tile = document.getElementById(tileId);
-    if (!tile) {
-      tile = document.createElement("div");
-      tile.id = tileId;
-      tile.style.cssText = "width:220px;height:125px;background:#000;border:2px solid #4f7cff;border-radius:6px;overflow:hidden;position:relative;";
-      const name = document.createElement("div");
-      name.style.cssText = "position:absolute;top:2px;left:4px;font:11px system-ui;color:#fff;background:#000000aa;padding:1px 5px;border-radius:3px;";
-      name.textContent = identity.slice(0, 12);
-      tile.appendChild(name);
-      this.videoLayer().appendChild(tile);
+  onRemoteVideo(identity: string, track: any) {
+    const p = this.players.get(identity);
+    if (!p) {
+      setTimeout(() => this.onRemoteVideo(identity, track), 300);
+      return;
     }
-    if (typeof track.attach === "function") track.attach(tile);
-    const rvid = tile.querySelector("video") as HTMLVideoElement | null;
-    rvid?.play().catch(() => {});
+    this.ensureBubble(p, identity);
+    if (typeof track.attach === "function" && p.video) {
+      track.attach(p.video);
+      p.video.play().catch(() => {});
+    }
     this.pushDbg("video-remote:" + identity);
   }
 
-  /** Remove a remote video tile when their track is gone. */
-  removeRemoteVideo(track: any) {
-    const el = track.attachedElements?.[0];
-    if (el?.parentElement?.id?.startsWith("vid-")) el.parentElement.remove();
+  removeRemoteVideo(identity: string) {
+    const p = this.players.get(identity);
+    if (p?.bubble && p.video) {
+      // keep the bubble (avatar), just clear the video stream
+      p.video.srcObject = null;
+      p.bubble.dataset.hasVideo = "0";
+    }
   }
 
-  /** Self preview, bottom-left, small. */
+  ensureBubble(p: PlayerUI, identity: string) {
+    if (p.bubble) return p.bubble;
+    const isMe = identity === this.myId || this.players.get(this.myId) === p;
+    const b = document.createElement("div");
+    b.style.cssText = [
+      "position:absolute", "width:84px", "height:84px", "border-radius:50%",
+      "overflow:hidden", "background:" + p.avatarColor,
+      "border:3px solid " + (isMe ? "#ffffff" : "#4f7cff"),
+      "box-shadow:0 2px 8px #0009", "transform:translate(-50%,-50%)",
+    ].join(";");
+    b.dataset.hasVideo = "0";
+    const v = document.createElement("video");
+    v.style.cssText = "width:100%;height:100%;object-fit:cover;" + (isMe ? "transform:scaleX(-1);" : "");
+    v.autoplay = true; v.playsInline = true;
+    if (isMe) v.muted = true;
+    v.style.display = "none";
+    b.appendChild(v);
+    // Name tag under the bubble
+    const name = document.createElement("div");
+    name.style.cssText = "position:absolute;bottom:-2px;left:50%;transform:translateX(-50%);font:11px system-ui;color:#fff;background:#000000aa;padding:1px 6px;border-radius:4px;white-space:nowrap;";
+    name.textContent = identity.slice(0, 14);
+    b.appendChild(name);
+    this.bubbleLayer().appendChild(b);
+    p.bubble = b;
+    p.video = v;
+    return b;
+  }
+
+  /** Attach the local camera track to MY bubble (replaces old corner preview). */
   showLocalPreview(pubOrTrack: any) {
-    // LocalTrackPublished passes a publication — use its .track
     const track = pubOrTrack?.track ?? pubOrTrack;
     if (typeof track?.attach !== "function") return;
-    let tile = document.getElementById("selfPreview");
-    if (!tile) {
-      tile = document.createElement("div");
-      tile.id = "selfPreview";
-      tile.style.cssText = "position:fixed;bottom:12px;left:12px;width:180px;height:102px;background:#000;border:2px solid #00c853;border-radius:6px;overflow:hidden;z-index:1000;";
-      const name = document.createElement("div");
-      name.style.cssText = "position:absolute;top:2px;left:4px;font:11px system-ui;color:#fff;background:#000000aa;padding:1px 5px;border-radius:3px;z-index:2;";
-      name.textContent = "Tú";
-      tile.appendChild(name);
-      document.body.appendChild(tile);
+    const me = this.players.get(this.myId);
+    if (!me) { setTimeout(() => this.showLocalPreview(pubOrTrack), 300); return; }
+    const b = this.ensureBubble(me, this.myId);
+    const nameTag = b.querySelector("div") as HTMLElement;
+    if (nameTag) nameTag.textContent = "Tú";
+    if (me.video) {
+      track.attach(me.video);
+      me.video.style.display = "";
+      me.video.play().catch(() => {});
+      b.dataset.hasVideo = "1";
     }
-    // attach() needs an HTMLMediaElement (video), not a div
-    let vid = tile.querySelector("video") as HTMLVideoElement | null;
-    if (!vid) {
-      vid = document.createElement("video");
-      vid.style.cssText = "width:100%;height:100%;object-fit:cover;transform:scaleX(-1);";
-      vid.autoplay = true; vid.playsInline = true; vid.muted = true;
-      tile.appendChild(vid);
-    }
-    track.attach(vid);
-    vid.play().catch(() => {});
     this.pushDbg("video-self");
   }
 
-  /** The browser's error above revealed attach() expects a track object with play();
-   * LocalTrackPublished passes a publication — extract its track first. */
+  /** Per-frame: position bubbles in screen space from Phaser world coords. */
+  updateBubbles() {
+    const cam = this.cameras.main;
+    const zoom = cam.zoom;
+    for (const p of this.players.values()) {
+      if (!p.bubble) continue;
+      const sx = (p.worldX - cam.scrollX) * zoom;
+      const sy = (p.worldY - cam.scrollY) * zoom;
+      p.bubble.style.transform = `translate3d(${sx - 42}px,${sy - 42}px,0)`;
+      // video visible only when actually streaming
+      if (p.video && p.video.srcObject) p.video.style.display = "";
+      else if (p.video) p.video.style.display = "none";
+    }
+  }
+
+  // ---- T4: subscribe only to nearby participants ----
+
+  updateSubscriptions() {
+    if (!this.lkRoom) return;
+    const me = this.players.get(this.myId);
+    if (!me) return;
+    for (const p of this.lkRoom.remoteParticipants.values()) {
+      const sprite = this.players.get(p.identity);
+      if (!sprite) continue;
+      const dist = Phaser.Math.Distance.Between(me.worldX, me.worldY, sprite.worldX, sprite.worldY) / TILE;
+      const want = dist <= AUDIO_MAX_RADIUS;
+      for (const pub of p.trackPublications.values()) {
+        if (pub.isSubscribed !== want) {
+          try { pub.setSubscribed(want); } catch { /* already in desired state */ }
+        }
+      }
+    }
+  }
+
+  // ---- players ----
 
   addPlayer(id: string, player: any) {
     if (this.players.has(id)) return;
@@ -347,45 +490,48 @@ class WorldScene extends Phaser.Scene {
       blue: 0x4f7cff, green: 0x00c853, orange: 0xff9100, purple: 0xaa00ff,
     };
     const color = colors[player.avatarStyle] || 0x4f7cff;
+    const colorHex = "#" + color.toString(16).padStart(6, "0");
     const isMe = id === this.myId;
-    const sprite = this.add.rectangle(
-      player.x * TILE + TILE / 2, player.y * TILE + TILE / 2,
-      TILE * 0.7, TILE * 0.7, color, 1
-    );
-    if (isMe) sprite.setStrokeStyle(3, 0xffffff, 1);
+    const wx = player.x * TILE + TILE / 2;
+    const wy = player.y * TILE + TILE / 2;
+    const sprite = this.add.rectangle(wx, wy, TILE * 0.7, TILE * 0.7, color, 1);
+    if (isMe) {
+      sprite.setStrokeStyle(3, 0xffffff, 1);
+      this.cameras.main.startFollow(sprite, true, 0.1, 0.1);
+    }
     const label = this.add.text(
-      sprite.x, sprite.y - TILE * 0.9, player.handle + (isMe ? " (yo)" : ""),
+      wx, wy - TILE * 0.85, player.handle + (isMe ? " (yo)" : ""),
       { font: "12px system-ui", color: "#fff", backgroundColor: "#00000088", padding: { x: 4, y: 2 } }
     ).setOrigin(0.5);
-    this.players.set(id, { sprite, label });
-    this.cameras.main.startFollow(sprite, true, 0.1, 0.1);
+    this.players.set(id, { sprite, label, worldX: wx, worldY: wy, avatarColor: colorHex });
+    if (isMe) {
+      // My bubble: colored circle immediately; video attaches when cam publishes
+      this.ensureBubble(this.players.get(id)!, id);
+    }
   }
 
   removePlayer(id: string) {
     const p = this.players.get(id);
     if (!p) return;
     p.sprite.destroy(); p.label.destroy();
+    p.bubble?.remove();
+    if (p.audioNode) { try { p.audioNode.ctx.close(); } catch {} }
+    p.audioEl?.remove();
     this.players.delete(id);
   }
 
-  movePlayer(id: string, player: any) {
-    const p = this.players.get(id);
-    if (!p) return;
-    this.tweens.add({
-      targets: [p.sprite, p.label],
-      x: player.x * TILE + TILE / 2,
-      y: player.y * TILE + TILE / 2,
-      duration: 110,
-      onUpdate: () => { p.label.x = p.sprite.x; p.label.y = p.sprite.y - TILE * 0.85; },
-    });
+  updateProximityVisuals() {
+    // now handled in updateSpatialAudio (per-frame, continuous)
   }
 
-  updateProximityVisuals() {
-    for (const [id, p] of this.players) {
-      if (id === this.myId) continue;
-      const vol = this.proximity[id] ?? 0;
-      p.sprite.setStrokeStyle(Math.round(vol * 3), 0xffffff, Math.min(1, vol * 1.5));
+  update() {
+    if (this.players.size === 0) return;
+    const me = this.players.get(this.myId);
+    if (me) {
+      this.halo.setPosition(me.worldX, me.worldY);
     }
+    this.updateBubbles();
+    this.updateSpatialAudio();
   }
 }
 
