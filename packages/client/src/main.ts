@@ -60,11 +60,19 @@ class WorldScene extends Phaser.Scene {
     // Robust keyboard input via DOM events (works even if canvas loses focus)
     const setKey = (e: KeyboardEvent, down: boolean) => {
       const k = e.key;
-      if (k === "ArrowLeft") this.keyState.left = down;
-      else if (k === "ArrowRight") this.keyState.right = down;
-      else if (k === "ArrowUp") this.keyState.up = down;
-      else if (k === "ArrowDown") this.keyState.down = down;
-      else return;
+      const map: Record<string, string> = {
+        ArrowLeft: "left", ArrowRight: "right", ArrowUp: "up", ArrowDown: "down",
+      };
+      const dir = map[k];
+      if (!dir) return;
+      if (down) {
+        // Exclusive: pressing a new arrow releases the previous one. Missed
+        // keyup events (alt-tab, browser quirks) otherwise leave a stale
+        // direction stuck true and the else-if chain moves the WRONG way.
+        this.keyState = { left: false, right: false, up: false, down: false, [dir]: true } as any;
+      } else {
+        (this.keyState as any)[dir] = false;
+      }
       e.preventDefault();
     };
     window.addEventListener("keydown", (e) => setKey(e, true));
@@ -284,7 +292,7 @@ class WorldScene extends Phaser.Scene {
       tile.appendChild(name);
       this.videoLayer().appendChild(tile);
     }
-    track.attach(tile);
+    if (typeof track.attach === "function") track.attach(tile);
     this.pushDbg("video-remote:" + identity);
   }
 
@@ -295,7 +303,10 @@ class WorldScene extends Phaser.Scene {
   }
 
   /** Self preview, bottom-left, small. */
-  showLocalPreview(track: any) {
+  showLocalPreview(pubOrTrack: any) {
+    // LocalTrackPublished passes a publication — use its .track
+    const track = pubOrTrack?.track ?? pubOrTrack;
+    if (typeof track?.attach !== "function") return;
     let tile = document.getElementById("selfPreview");
     if (!tile) {
       tile = document.createElement("div");
@@ -310,6 +321,9 @@ class WorldScene extends Phaser.Scene {
     track.attach(tile);
     this.pushDbg("video-self");
   }
+
+  /** The browser's error above revealed attach() expects a track object with play();
+   * LocalTrackPublished passes a publication — extract its track first. */
 
   addPlayer(id: string, player: any) {
     if (this.players.has(id)) return;
