@@ -148,7 +148,9 @@ class WorldScene extends Phaser.Scene {
     const mm = document.createElement("canvas");
     mm.id = "minimap";
     mm.width = 160; mm.height = 80;
-    mm.style.cssText = "position:fixed;right:10px;bottom:10px;width:160px;height:80px;background:#0b0e16cc;border:1px solid #2a3350;border-radius:8px;z-index:60;pointer-events:none;";
+    const mmW = Math.min(160, Math.floor(window.innerWidth * 0.35));
+mm.width = mmW; mm.height = Math.round(mmW / 2);
+    mm.style.cssText = `position:fixed;right:8px;bottom:8px;width:${mmW}px;height:${Math.round(mmW/2)}px;background:#0b0e16cc;border:1px solid #2a3350;border-radius:8px;z-index:60;pointer-events:none;`;
     document.body.appendChild(mm);
 
     // Dynamic user list (thin window; groups by proximity clusters)
@@ -201,12 +203,14 @@ class WorldScene extends Phaser.Scene {
     if (id === this.myId) {
       // Server truth (rare for self — no echo). Snap only if far from sprite
       // (rejected move) to avoid fighting the optimistic animation.
-      const far = Math.abs(p.sprite.x - wx) > TILE * 1.5 || Math.abs(p.sprite.y - wy) > TILE * 1.5;
-      if (far) { p.sprite.x = wx; p.sprite.y = wy; }
+      // Server truth ALWAYS wins for self: if the move was accepted this equals the
+      // optimistic tween target (no visual change); if rejected, this corrects drift.
       p.worldX = wx; p.worldY = wy;
+      this.tweens.killTweensOf([p.sprite, p.label, (p.sprite as any).faceRef].filter(Boolean));
+      p.sprite.x = wx; p.sprite.y = wy;
       const f = (p.sprite as any).faceRef;
-      if (f) { f.x = p.sprite.x; f.y = p.sprite.y; }
-      p.label.y = p.sprite.y - TILE * 0.85;
+      if (f) { f.x = wx; f.y = wy; }
+      p.label.x = wx; p.label.y = wy - TILE * 0.85;
       if (
         this.movingTo &&
         Math.round(player.x) === this.movingTo.x &&
@@ -533,7 +537,8 @@ class WorldScene extends Phaser.Scene {
       }
       row.onclick = () => {
         const cam = this.cameras.main;
-        cam.pan(p.worldX, p.worldY, 300, "Sine");
+        cam.pan(p.worldX, p.worldY, 300, "Sine", true,
+          () => { const me2 = this.players.get(this.myId); if (me2) cam.startFollow(me2.sprite, true, 0.1, 0.1); });
       };
       ul.appendChild(row);
     };
@@ -648,8 +653,8 @@ class WorldScene extends Phaser.Scene {
     const zoom = cam.zoom;
     for (const p of this.players.values()) {
       if (!p.bubble) continue;
-      const sx = (p.worldX - cam.scrollX) * zoom;
-      const sy = (p.worldY - cam.scrollY) * zoom;
+      const sx = (p.sprite.x - cam.scrollX) * zoom;
+      const sy = (p.sprite.y - cam.scrollY) * zoom;
       p.bubble.style.transform = `translate3d(${sx - 42}px,${sy - 42}px,0)`;
       // video visible only when actually streaming
       if (p.video && p.video.srcObject) p.video.style.display = "";
@@ -747,8 +752,8 @@ class WorldScene extends Phaser.Scene {
     }
     this.updateBubbles();
     this.updateSpatialAudio();
-    this.renderMinimap();
-    this.renderUserList();
+    try { this.renderMinimap(); } catch (e) { console.warn("[minimap]", e); }
+    try { this.renderUserList(); } catch (e) { console.warn("[userlist]", e); }
   }
 }
 
