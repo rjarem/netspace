@@ -168,9 +168,12 @@ class WorldScene extends Phaser.Scene {
     const wx = player.x * TILE + TILE / 2;
     const wy = player.y * TILE + TILE / 2;
     if (id === this.myId) {
+      // Server truth (rare for self — no echo). Snap only if far from sprite
+      // (rejected move) to avoid fighting the optimistic animation.
+      const far = Math.abs(p.sprite.x - wx) > TILE * 1.5 || Math.abs(p.sprite.y - wy) > TILE * 1.5;
+      if (far) { p.sprite.x = wx; p.sprite.y = wy; }
       p.worldX = wx; p.worldY = wy;
-      p.sprite.x = wx; p.sprite.y = wy;
-      p.label.x = wx; p.label.y = wy - TILE * 0.85;
+      p.label.x = p.sprite.x; p.label.y = p.sprite.y - TILE * 0.85;
       if (
         this.movingTo &&
         Math.round(player.x) === this.movingTo.x &&
@@ -191,7 +194,16 @@ class WorldScene extends Phaser.Scene {
   }
 
   tick() {
-    if (!this.room || this.moveLock) return;
+    if (!this.room) return;
+    if (this.moveLock) {
+      const meS = this.players.get(this.myId);
+      if (meS && !this.tweens.isTweening(meS.sprite)) {
+        // tween gone (rejected move / edge case): re-sync from stored tile and unlock
+        meS.sprite.x = meS.worldX; meS.sprite.y = meS.worldY;
+        this.moveLock = false; this.movingTo = null;
+      }
+    }
+    if (this.moveLock) return;
     const me = this.players.get(this.myId);
     if (!me) return;
 
@@ -230,6 +242,31 @@ class WorldScene extends Phaser.Scene {
     this.moveLock = true;
     this.movingTo = { x: nx, y: ny };
     this.room.send("move", { x: nx, y: ny });
+    // Colyseus does NOT echo own-schema changes to the sender, so the server
+    // onChange will NOT fire for us. Animate optimistically tile→tile and
+    // unlock when the animation completes. If the server rejects the move
+    // (wall/zone), our stored tile stays put and the next move re-syncs.
+    this.animateOwnMove(nx, ny);
+  }
+
+  /** Smooth 120ms tile-to-tile animation for the local avatar, then unlock. */
+  animateOwnMove(tx: number, ty: number) {
+    const me = this.players.get(this.myId);
+    if (!me) { this.moveLock = false; return; }
+    const wx = tx * TILE + TILE / 2;
+    const wy = ty * TILE + TILE / 2;
+    this.tweens.add({
+      targets: [me.sprite, me.label],
+      x: wx, y: wy,
+      duration: 120,
+      ease: "Linear",
+      onUpdate: () => { me.label.x = me.sprite.x; me.label.y = me.sprite.y - TILE * 0.85; },
+      onComplete: () => {
+        me.worldX = wx; me.worldY = wy;
+        this.moveLock = false;
+        this.movingTo = null;
+      },
+    });
   }
 
   keyState: { left: boolean; right: boolean; up: boolean; down: boolean } = { left: false, right: false, up: false, down: false };
