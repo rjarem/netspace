@@ -208,7 +208,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
 
     this.tickInterval = setInterval(() => this.tick(), 120);
       const st = document.getElementById("status");
-      if (st) st.textContent = "✅ Conectado — click o flechas para moverte";
+      if (st) st.textContent = "✅ " + APP_VERSION + " — conectado";
       // Debug handle for headless/server-side diagnostics
       (window as any).__ns = {
         scene: this,
