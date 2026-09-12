@@ -156,14 +156,11 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     // Dynamic user list (thin window; groups by proximity clusters)
     const ul = document.createElement("div");
     ul.id = "userlist";
-    ul.style.cssText = "position:fixed;right:10px;top:10px;width:34px;max-height:60vh;overflow-y:auto;background:#0b0e16cc;border:1px solid #2a3350;border-radius:8px;z-index:60;padding:4px 4px;transition:width .2s;scrollbar-width:none;";
+    ul.style.cssText = "position:fixed;right:8px;top:8px;width:auto;max-width:40vw;max-height:60vh;overflow-y:auto;background:#0b0e16cc;border:1px solid #2a3350;border-radius:10px;z-index:60;padding:5px;transition:width .2s;scrollbar-width:none;user-select:none;-webkit-user-select:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
     document.body.appendChild(ul);
     ul.addEventListener("click", (ev) => {
-      const target = ev.target as HTMLElement;
-      if (target.id === "userlist" || target.tagName === "DIV" && !(target as any).dataset?.row) {
-        // toggle expand only when clicking the container/empty space; row clicks jump
-        if (target === ul) ul.dataset.exp = ul.dataset.exp === "1" ? "0" : "1";
-      }
+      // toggle expand only when clicking the container itself (not a pill row)
+      if (ev.target === ul) ul.dataset.exp = ul.dataset.exp === "1" ? "0" : "1";
     });
 
     // PTZ-style d-pad (floating, mobile-first): tap arrows to step-move.
@@ -558,12 +555,12 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     groups.sort((g1, g2) => (g2 === myGroup ? 1 : 0) - (g1 === myGroup ? 1 : 0));
     // render: thin by default (initials avatars); expand on hover/click
     const expanded = ul.dataset.exp === "1";
-    ul.style.width = expanded ? "170px" : "34px";
     const mk = (id: string, isMeRow: boolean) => {
       const p = this.players.get(id)!;
       const row = document.createElement("div");
       row.title = p.handle || id;
-      row.style.cssText = "display:flex;align-items:center;gap:6px;padding:3px 2px;cursor:pointer;border-radius:6px;";
+      row.style.cssText = "display:flex;align-items:center;gap:6px;padding:4px;cursor:pointer;border-radius:8px;user-select:none;-webkit-user-select:none;touch-action:manipulation;-webkit-tap-highlight-color:transparent;";
+      row.addEventListener("pointerdown", (e) => e.preventDefault());
       // Pill button with the handle (first word, max 8 chars) — much more intuitive than initials
       const full = (p.handle || id).trim();
       const short = (full.split(/\s+/)[0] || full).slice(0, 8);
@@ -579,8 +576,11 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       }
       row.onclick = () => {
         const cam = this.cameras.main;
-        cam.pan(p.worldX, p.worldY, 300, "Sine", true,
-          () => { const me2 = this.players.get(this.myId); if (me2) cam.startFollow(me2.sprite, true, 0.1, 0.1); });
+        cam.stopFollow();
+        cam.pan(p.sprite.x, p.sprite.y, 400, "Sine", true, () => {
+          const me2 = this.players.get(this.myId);
+          if (me2) cam.startFollow(me2.sprite, true, 0.1, 0.1);
+        });
       };
       ul.appendChild(row);
     };
