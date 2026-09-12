@@ -454,6 +454,7 @@ class WorldScene extends Phaser.Scene {
     if (typeof track.attach === "function" && p.video) {
       track.attach(p.video);
       p.video.play().catch(() => {});
+      const av = p.bubble?.querySelector("img"); if (av) av.style.display = "none";
     }
     this.pushDbg("video-remote:" + identity);
   }
@@ -463,7 +464,9 @@ class WorldScene extends Phaser.Scene {
     if (p?.bubble && p.video) {
       // keep the bubble (avatar), just clear the video stream
       p.video.srcObject = null;
+      p.video.style.display = "none";
       p.bubble.dataset.hasVideo = "0";
+      const av = p.bubble.querySelector("img"); if (av) av.style.display = "block";
     }
   }
 
@@ -473,11 +476,17 @@ class WorldScene extends Phaser.Scene {
     const b = document.createElement("div");
     b.style.cssText = [
       "position:absolute", "width:84px", "height:84px", "border-radius:50%",
-      "overflow:hidden", "background:" + p.avatarColor,
+      "overflow:hidden", "background:#1a1a1e",
       "border:3px solid " + (isMe ? "#ffffff" : "#4f7cff"),
       "box-shadow:0 2px 8px #0009", "transform:translate(-50%,-50%)",
     ].join(";");
     b.dataset.hasVideo = "0";
+    // Default avatar image shown when the participant is NOT streaming video
+    const av = document.createElement("img");
+    av.src = "avatar-default.png";
+    av.alt = "";
+    av.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
+    b.appendChild(av);
     const v = document.createElement("video");
     v.style.cssText = "width:100%;height:100%;object-fit:cover;" + (isMe ? "transform:scaleX(-1);" : "");
     v.autoplay = true; v.playsInline = true;
@@ -509,6 +518,7 @@ class WorldScene extends Phaser.Scene {
       me.video.style.display = "";
       me.video.play().catch(() => {});
       b.dataset.hasVideo = "1";
+      const av = b.querySelector("img"); if (av) av.style.display = "none";
     }
     this.pushDbg("video-self");
   }
