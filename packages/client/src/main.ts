@@ -556,10 +556,24 @@ class WorldScene extends Phaser.Scene {
     const wx = player.x * TILE + TILE / 2;
     const wy = player.y * TILE + TILE / 2;
     const sprite = this.add.rectangle(wx, wy, TILE * 0.7, TILE * 0.7, color, 1);
-    // Generic avatar placeholder: a happy face over the colored circle while the
-    // photo-avatar flow (camera snapshot at signup) is implemented.
-    const face = this.add.text(wx, wy, "🙂", { fontSize: `${Math.round(TILE * 0.55)}px` })
-      .setOrigin(0.5, 0.5);
+    // Generic avatar placeholder: canvas-drawn smiley over the colored circle while
+    // the photo-avatar flow (camera snapshot at signup) is implemented.
+    // Drawn via canvas texture (not emoji text): guaranteed to render on every OS/browser.
+    const texKey = `smiley-${player.avatarStyle || "blue"}`;
+    if (!this.textures.exists(texKey)) {
+      const c = document.createElement("canvas");
+      c.width = 32; c.height = 32;
+      const g = c.getContext("2d")!;
+      g.fillStyle = "#1a1a1a";
+      g.beginPath(); g.arc(16, 16, 14, 0, Math.PI * 2); g.fill();
+      g.fillStyle = "#ffffff";
+      g.beginPath(); g.arc(10, 12, 2.4, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(22, 12, 2.4, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = "#ffffff"; g.lineWidth = 2.4; g.lineCap = "round";
+      g.beginPath(); g.arc(16, 16, 8, Math.PI * 0.15, Math.PI * 0.85); g.stroke();
+      this.textures.addCanvas(texKey, c);
+    }
+    const face = this.add.image(wx, wy, texKey).setDisplaySize(TILE * 0.62, TILE * 0.62);
     (sprite as any).faceRef = face;
     sprite.once(Phaser.GameObjects.Events.DESTROY, () => face.destroy());
     if (isMe) {
