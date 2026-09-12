@@ -67,7 +67,7 @@ class WorldScene extends Phaser.Scene {
   }
 
   create() {
-    const mapW = 40, mapH = 30;
+    const mapW = 128, mapH = 64;
 
     this.add.rectangle(mapW * TILE / 2, mapH * TILE / 2, mapW * TILE, mapH * TILE, 0x1c2130);
 
@@ -76,9 +76,9 @@ class WorldScene extends Phaser.Scene {
     for (let x = 0; x <= mapW; x++) g.lineBetween(x * TILE, 0, x * TILE, mapH * TILE);
     for (let y = 0; y <= mapH; y++) g.lineBetween(0, y * TILE, mapW * TILE, mapH * TILE);
 
-    drawZone(this, 15, 2, 10, 5, "Main Stage", 0x7c4dff, 0.25);
-    drawZone(this, 6, 14, 5, 4, "Round Table", 0x00bfa5, 0.25);
-    drawZone(this, 26, 6, 8, 6, "DJ Lounge", 0xff5251, 0.25);
+    drawZone(this, 40, 3, 24, 10, "Main Stage", 0x7c4dff, 0.25);
+    drawZone(this, 14, 30, 10, 8, "Round Table", 0x00bfa5, 0.25);
+    drawZone(this, 84, 8, 18, 12, "DJ Lounge", 0xff5251, 0.25);
 
     // T1: halo = own proximity radius (audible/visible range)
     this.halo = this.add.circle(0, 0, AUDIO_MAX_RADIUS * TILE, 0x4f7cff, 0.05);
@@ -144,7 +144,34 @@ class WorldScene extends Phaser.Scene {
         this.joinVoice(msg);
       });
 
-      this.tickInterval = setInterval(() => this.tick(), 120);
+      // Minimap: corner canvas with dots (self highlighted). Scaled to map.
+    const mm = document.createElement("canvas");
+    mm.id = "minimap";
+    mm.width = 160; mm.height = 80;
+    mm.style.cssText = "position:fixed;right:10px;bottom:10px;width:160px;height:80px;background:#0b0e16cc;border:1px solid #2a3350;border-radius:8px;z-index:60;pointer-events:none;";
+    document.body.appendChild(mm);
+
+    // Dynamic user list (thin window; groups by proximity clusters)
+    const ul = document.createElement("div");
+    ul.id = "userlist";
+    ul.style.cssText = "position:fixed;right:10px;top:10px;width:34px;max-height:60vh;overflow-y:auto;background:#0b0e16cc;border:1px solid #2a3350;border-radius:8px;z-index:60;padding:4px 4px;transition:width .2s;scrollbar-width:none;";
+    document.body.appendChild(ul);
+    ul.addEventListener("click", (ev) => {
+      const target = ev.target as HTMLElement;
+      if (target.id === "userlist" || target.tagName === "DIV" && !(target as any).dataset?.row) {
+        // toggle expand only when clicking the container/empty space; row clicks jump
+        if (target === ul) ul.dataset.exp = ul.dataset.exp === "1" ? "0" : "1";
+      }
+    });
+
+    // Zoom with mouse wheel (desktop)
+    this.input.on("wheel", (_p: unknown, _o: unknown, _d: unknown, dy: number) => {
+      const cam = this.cameras.main;
+      const z = Phaser.Math.Clamp(cam.zoom - dy * 0.001, 0.5, 2.5);
+      cam.setZoom(z);
+    });
+
+    this.tickInterval = setInterval(() => this.tick(), 120);
       const st = document.getElementById("status");
       if (st) st.textContent = "✅ Conectado — click o flechas para moverte";
       // Debug handle for headless/server-side diagnostics
@@ -430,6 +457,98 @@ class WorldScene extends Phaser.Scene {
     }
   }
 
+  renderMinimap() {
+    const mm = document.getElementById("minimap") as HTMLCanvasElement | null;
+    if (!mm) return;
+    const ctx = mm.getContext("2d");
+    if (!ctx) return;
+    const mw = mm.width, mh = mm.height;
+    ctx.clearRect(0, 0, mw, mh);
+    // map is mapW x mapH tiles
+    const mapW = 128, mapH = 64;
+    const sx = mw / mapW, sy = mh / mapH;
+    // zones
+    ctx.fillStyle = "#7c4dff44"; ctx.fillRect(40 * sx, 3 * sy, 24 * sx, 10 * sy);
+    ctx.fillStyle = "#00bfa544"; ctx.fillRect(14 * sx, 30 * sy, 10 * sx, 8 * sy);
+    ctx.fillStyle = "#ff525144"; ctx.fillRect(84 * sx, 8 * sy, 18 * sx, 12 * sy);
+    for (const [id, p] of this.players) {
+      const me = id === this.myId;
+      ctx.fillStyle = me ? "#ffffff" : (p.avatarColor || "#4f7cff");
+      ctx.beginPath();
+      ctx.arc(p.worldX / TILE * sx, p.worldY / TILE * sy, me ? 3.2 : 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  renderUserList() {
+    const ul = document.getElementById("userlist");
+    if (!ul) return;
+    const me = this.players.get(this.myId);
+    // throttle DOM rebuild to 1/s
+    if (this.ulLast && Date.now() - this.ulLast < 1000) return;
+    this.ulLast = Date.now();
+    ul.innerHTML = "";
+    // group players: cluster by AUDIO_MAX_RADIUS adjacency (BFS over close pairs)
+    const ids = [...this.players.keys()].filter((i) => i !== this.myId);
+    const groups: string[][] = [];
+    const seen = new Set<string>();
+    for (const id of ids) {
+      if (seen.has(id)) continue;
+      const grp = [id]; seen.add(id);
+      for (let k = 0; k < grp.length; k++) {
+        const a = this.players.get(grp[k])!;
+        for (const b of ids) {
+          if (seen.has(b)) continue;
+          const bb = this.players.get(b)!;
+          if (Phaser.Math.Distance.Between(a.worldX, a.worldY, bb.worldX, bb.worldY) <= AUDIO_MAX_RADIUS * TILE) {
+            grp.push(b); seen.add(b);
+          }
+        }
+      }
+      groups.push(grp);
+    }
+    // my group first
+    const myGroup = me ? groups.find((g) => g.some((id) => {
+      const p = this.players.get(id)!;
+      return Phaser.Math.Distance.Between(me.worldX, me.worldY, p.worldX, p.worldY) <= AUDIO_MAX_RADIUS * TILE;
+    })) : undefined;
+    groups.sort((g1, g2) => (g2 === myGroup ? 1 : 0) - (g1 === myGroup ? 1 : 0));
+    // render: thin by default (initials avatars); expand on hover/click
+    const expanded = ul.dataset.exp === "1";
+    ul.style.width = expanded ? "170px" : "34px";
+    const mk = (id: string, isMeRow: boolean) => {
+      const p = this.players.get(id)!;
+      const row = document.createElement("div");
+      row.title = p.handle || id;
+      row.style.cssText = "display:flex;align-items:center;gap:6px;padding:3px 2px;cursor:pointer;border-radius:6px;";
+      const dot = document.createElement("span");
+      dot.style.cssText = `width:20px;height:20px;border-radius:50%;background:${p.avatarColor};flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;font:10px system-ui;color:#fff;`;
+      dot.textContent = (p.handle || id).slice(0, 2).toUpperCase();
+      row.appendChild(dot);
+      if (expanded) {
+        const nm = document.createElement("span");
+        nm.style.cssText = "font:11px system-ui;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+        nm.textContent = (p.handle || id).slice(0, 12) + (isMeRow ? " (yo)" : "");
+        row.appendChild(nm);
+      }
+      row.onclick = () => {
+        const cam = this.cameras.main;
+        cam.pan(p.worldX, p.worldY, 300, "Sine");
+      };
+      ul.appendChild(row);
+    };
+    if (me) mk(this.myId, true);
+    for (const g of groups) {
+      if (expanded && groups.length > 0) {
+        const sep = document.createElement("div");
+        sep.style.cssText = "height:1px;background:#2a3350;margin:4px 2px;";
+        ul.appendChild(sep);
+      }
+      for (const id of g) mk(id, false);
+    }
+  }
+  ulLast = 0;
+
   // ---- T1: video bubbles over avatars ----
 
   /** Fullscreen overlay layer that tracks Phaser world coordinates. */
@@ -628,6 +747,8 @@ class WorldScene extends Phaser.Scene {
     }
     this.updateBubbles();
     this.updateSpatialAudio();
+    this.renderMinimap();
+    this.renderUserList();
   }
 }
 
