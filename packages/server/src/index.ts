@@ -11,6 +11,12 @@ const PORT = parseInt(process.env.PORT || "2567");
 
 const app = express();
 app.get("/api/health", (_req, res) => res.json({ ok: true, room: "netspace" }));
+// Fase 3 debugging (auditor-prescrito): los clientes headless ?probe= reportan
+// cada paso de connect() aquí; el log cae a stdout del server (gr-server.log).
+app.get("/api/probelog", (req, res) => {
+  console.log("[probelog] " + (req.query.m || "").toString().slice(0, 300));
+  res.json({ ok: true });
+});
 app.use(inviteRouter());
 
 const httpServer = http.createServer(app);

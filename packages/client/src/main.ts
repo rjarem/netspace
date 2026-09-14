@@ -79,13 +79,30 @@ class WorldScene extends Phaser.Scene {
 
   async connect(handle: string) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
+    // Corrección 1 (auditor, 14-sep): el bypass ?probe= de headless gates fuerza
+    // el server local — con puerto 4173 la detección por puerto caía al branch
+    // de prod (wss://api.localhost) y el gate C no pegaba al server local.
+    const isProbe = new URLSearchParams(location.search).has("probe");
+    // Fase 3 debugging (auditor-prescrito): log de cada paso del flujo a
+    // /api/probelog para depurar joins headless sin consola visible.
+    const plog = (s: string) => {
+      if (!isProbe) return;
+      try { fetch("http://127.0.0.1:2567/api/probelog?m=" + encodeURIComponent(`${handle}: ${s}`)).catch(() => {}); } catch {}
+    };
+    window.onerror = (msg) => { plog("onerror: " + String(msg).slice(0, 200)); };
+    plog("connect() called, isProbe=" + isProbe);
     // Production: Colyseus lives on api.turedvirtual.vip; dev: localhost:2567
-    const server = location.port === "5173"
+    const server = isProbe
+      ? "ws://127.0.0.1:2567"
+      : location.port === "5173"
       ? "ws://localhost:2567"
       : `${proto}://api.${location.hostname.replace(/^play\./, "")}`;
+    plog("server=" + server);
     const client = new Client(server);
     try {
+      plog("joinOrCreate...");
       const room = (await client.joinOrCreate("world", { token: btoa(`dev:${handle}`) })) as Room<any>;
+      plog("joined roomId=" + room.id);
       // Fase 0 (auditoría 14-sep): v2b-guard DESHABILITADO. Los guards client-side
       // NUNCA hacen leave+rejoin — solo deshabilitan features. El handshake de
       // versión ahora es server→client: el server anuncia su build SHA en el
@@ -107,8 +124,10 @@ class WorldScene extends Phaser.Scene {
       this.room = room;
       (window as any).__grScene = this; // debug/diagnostics hook (prod-safe: read-only)
       this.myId = room.sessionId;
-      // Fase 2.1: avatar POST-JOIN, después del handshake onStateChange (foto
-      // fuera del schema — Fase 1.3). Reintento exponencial con ack avatar-ok.
+      // Corrección 2 (auditor, 14-sep): el listener del ack va UNA sola vez,
+      // FUERA del retry loop — si va dentro, el server puede responder antes
+      // de que el listener del intento esté registrado → falso negativo.
+      room.onMessage("avatar-ok", () => { (this as any).avatarOk = true; });
       const myPhoto = (window as any).__greenroom?.avatarPhoto;
       if (myPhoto) {
         let attempt = 0;
@@ -117,9 +136,11 @@ class WorldScene extends Phaser.Scene {
             room.send("avatar", { photo: myPhoto });
             const ok = await new Promise<boolean>((res) => {
               const t = setTimeout(() => res(false), 1000 * Math.pow(2, attempt));
-              room.onMessage("avatar-ok", () => { clearTimeout(t); res(true); });
+              const check = setInterval(() => {
+                if ((this as any).avatarOk) { clearInterval(check); clearTimeout(t); res(true); }
+              }, 100);
             });
-            if (ok) { (this as any).avatarOk = true; break; }
+            if (ok) break;
             attempt++;
           }
         };
@@ -364,10 +385,38 @@ const game = new Phaser.Game({
 });
 
 // Green Room replaces the plain handle form: permissions → devices → photo → enter.
-const gr = runGreenRoom();
-gr.then((res: GreenRoomResult) => {
-  // Expose for bubbles: photo dataURL becomes the remote-visible avatar image
-  (window as any).__greenroom = res;
-  const scene = game.scene.scenes[0] as WorldScene;
-  scene.connect(res.handle);
-});
+// Fase 3: headless probe bypass — ?probe=<handle> entra directo (sin Antesala);
+// el roomId queda en el log estructurado del server para el gate cross2.
+const probeHandle = new URLSearchParams(location.search).get("probe");
+if (probeHandle) {
+  // Instrumentación temprana (auditor-prescrito): plog apunta al server
+  // colyseus (2567) — el static server (4175) no tiene /api/probelog.
+  (window as any).plog = (s: string) => {
+    try { fetch("http://127.0.0.1:2567/api/probelog?m=" + encodeURIComponent(`${probeHandle}: ${s}`)).catch(() => {}); } catch {}
+    try { document.title = "PL:" + s.slice(0, 60); } catch {}
+  };
+  (window as any).plog("bypass activado");
+  (window as any).__greenroom = { handle: probeHandle, avatarPhoto: null };
+  // BUG FOUND (gate C): las scenes de Phaser bootean ASYNC — en este punto
+  // scene.scenes[0] es undefined y connect() nunca se llamaba (el join no
+  // llegaba al server). En el flujo normal la Antesala tarda segundos y
+  // enmascaraba el race. Esperar a que la scene esté activa.
+  const waitScene = () => {
+    const s = (game.scene as any).scenes?.[0];
+    if (s) {
+      (window as any).plog("scene ready, calling connect");
+      s.connect(probeHandle);
+    } else {
+      setTimeout(waitScene, 100);
+    }
+  };
+  waitScene();
+} else {
+  const gr = runGreenRoom();
+  gr.then((res: GreenRoomResult) => {
+    // Expose for bubbles: photo dataURL becomes the remote-visible avatar image
+    (window as any).__greenroom = res;
+    const scene = game.scene.scenes[0] as WorldScene;
+    scene.connect(res.handle);
+  });
+}
