@@ -115,6 +115,14 @@ Regla: **muteo impuesto por admin/moderador no puede desmutearse el usuario solo
 
 ## Registro de cambios
 - v1 (14-sep-2026): primera versión tras brainstorming Tito + implementador.
+- **Decisiones post-veredicto del auditor (14-sep):** (1) DEV_NO_AUTH=1 se
+  mantiene en prod hasta Fase 5b — PROBLEMA CONOCIDO PARA PRODUCCIÓN,
+  documentado: cualquiera con el link entra; aceptable solo en etapa de
+  pruebas. (2) DMs ELIMINADOS de la visión; en su lugar, tarjeta de contacto
+  opt-in como idea futura. (3) Hardening (5a/5b) ANTES de Fase 3 UI.
+  (4) Zonas: JSON por evento AHORA + **editor visual de zonas en el plan
+  antes de producción** (decisión híbrida de Tito: las zonas viven como DATA,
+  el editor será una capa de UI que escribe ese mismo JSON — sin retrabajo).
 - **14-sep-2026 (post-brainstorm):** commit `b855a50` — el bypass `?probe=` ahora
   acepta `&probeUrl=<ws-url>` para apuntar los gates headless a PROD
   (`wss://api.turedvirtual.vip`) sin tocar código. Default sigue siendo el server
