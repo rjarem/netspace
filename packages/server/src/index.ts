@@ -14,7 +14,15 @@ app.get("/api/health", (_req, res) => res.json({ ok: true, room: "netspace" }));
 app.use(inviteRouter());
 
 const httpServer = http.createServer(app);
-const gameServer = new Server({ transport: new WebSocketTransport({ server: httpServer }) });
+const gameServer = new Server({
+  transport: new WebSocketTransport({
+    server: httpServer,
+    // Colyseus default is 4KB — any avatar photo (>4KB dataURL) killed the
+    // websocket mid-join, dropping the client into a fresh room (everyone
+    // isolated). 1MB comfortably fits 256px jpeg (~30KB) + state patches.
+    maxPayload: 1024 * 1024,
+  }),
+});
 gameServer.define("world", WorldRoom);
 
 gameServer.listen(PORT).then(() => console.log(`[netspace] listening on :${PORT}`));
