@@ -1,0 +1,11 @@
+import { Client } from "colyseus.js";
+const c = new Client("wss://api.turedvirtual.vip");
+const room: any = await c.joinOrCreate("world", { token: btoa("dev:probeD2") });
+let last: any = {};
+room.onStateChange((s: any) => { const p = s.players.get(room.sessionId); if (p) last = { x: p.x, y: p.y }; });
+await new Promise(r => setTimeout(r, 1500));
+console.log("start:", JSON.stringify(last));
+room.send("move", { x: last.x + 1, y: last.y });
+await new Promise(r => setTimeout(r, 600));
+console.log("after move:", JSON.stringify(last));
+process.exit(0);

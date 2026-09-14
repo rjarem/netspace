@@ -11,6 +11,10 @@ import {
 import { defaultMap } from "./world.js";
 import { mintLiveKitToken } from "./livekit.js";
 
+// Drag & drop: max tiles per throttled drag update (anti-teleport guard).
+// Client sends at most 10 updates/s while dragging — 8 tiles covers fast flicks.
+const DRAG_MAX_TILES = 8;
+
 class PlayerState extends Schema {
   @type("string") handle = "";
   @type("string") role: string = "attendee";
@@ -84,6 +88,20 @@ export class WorldRoom extends Room<WorldState> {
       player.y = to.y;
       this.updateZoneFlags(player);
       this.maybeRefreshLiveKitToken(client, player);
+    });
+
+    // Drag & drop of own avatar (v2 controls): direct reposition with the SAME
+    // validation as move, but distance-capped to prevent teleport abuse.
+    this.onMessage("drag", (client, msg: MoveMsg) => {
+      const player = this.state.players.get(client.sessionId);
+      if (!player) return;
+      const from = { x: player.x, y: player.y };
+      const dist = Math.hypot(msg.x - from.x, msg.y - from.y);
+      if (dist > DRAG_MAX_TILES) return; // reject jumps — client sends throttled steps
+      const to = validateMove(from, { x: msg.x, y: msg.y }, this.map, player.role as UserRole);
+      player.x = to.x;
+      player.y = to.y;
+      this.updateZoneFlags(player);
     });
 
     this.onMessage("state", (client, msg: StateMsg) => {
