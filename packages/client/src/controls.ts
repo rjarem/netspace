@@ -37,6 +37,44 @@ export function initControls(sc: SC) {
     cam.setZoom(z);
   });
 
+  // --- Pinch-zoom táctil (móvil): 2 dedos = zoom, 1 dedo = drag normal ---
+  // Fix (Tito, 14-sep): solo existía wheel (desktop) y teclas +/-; en el
+  // teléfono no había forma de hacer zoom.
+  const touches = new Map<number, { x: number; y: number }>();
+  let lastPinchDist = 0;
+  const PINCH_MIN_DIST = 24; // px: ignora dedos demasiado juntos
+  const canvas = scene.game.canvas;
+  const pinchDist = () => {
+    const pts = [...touches.values()];
+    return pts.length >= 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0;
+  };
+  canvas.addEventListener("touchstart", (e: TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) touches.set(t.identifier, { x: t.clientX, y: t.clientY });
+    if (touches.size === 2) { lastPinchDist = pinchDist(); }
+  }, { passive: true });
+  canvas.addEventListener("touchmove", (e: TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) {
+      const prev = touches.get(t.identifier);
+      if (prev) { prev.x = t.clientX; prev.y = t.clientY; }
+    }
+    if (touches.size >= 2) {
+      e.preventDefault(); // el navegador no debe hacer zoom de página
+      const d = pinchDist();
+      if (lastPinchDist > PINCH_MIN_DIST && d > PINCH_MIN_DIST) {
+        const cam = scene.cameras.main;
+        const factor = d / lastPinchDist;
+        cam.setZoom(Phaser.Math.Clamp(cam.zoom * factor, 0.5, 2.5));
+      }
+      lastPinchDist = d;
+    }
+  }, { passive: false });
+  const endTouch = (e: TouchEvent) => {
+    for (const t of Array.from(e.changedTouches)) touches.delete(t.identifier);
+    lastPinchDist = 0;
+  };
+  canvas.addEventListener("touchend", endTouch, { passive: true });
+  canvas.addEventListener("touchcancel", endTouch, { passive: true });
+
   // --- Drag own avatar ---
   let dragging = false;
   let lastSend = 0;
@@ -61,15 +99,29 @@ export function initControls(sc: SC) {
     const now = Date.now();
     if (!force && now - lastSend < DRAG_SEND_MS) return;
     lastSend = now;
-    // During drag: teleport-style position updates (server validates + relays).
-    // This bypasses the tile-by-tile walk — dragging is a direct reposition.
-    sc.room.send("drag", { x: tx, y: ty });
+    // Fix (Tito, 14-sep): 'barrera invisible' — si el drag supera DRAG_MAX_TILES
+    // (8) el server RECHAZA el paquete en silencio, pero el cliente ya pintó la
+    // posición nueva → onServerPosition hace snap-back violento. Clamp al tile
+    // más lejano permitido dentro del radio, y NUNCA pintar más allá de eso.
+    const fromTx = Math.round((me.worldX - TILE / 2) / TILE);
+    const fromTy = Math.round((me.worldY - TILE / 2) / TILE);
+    const ddx = tx - fromTx, ddy = ty - fromTy;
+    const dist = Math.hypot(ddx, ddy);
+    let sx = tx, sy = ty;
+    if (dist > 8) {
+      const k = 8 / dist;
+      sx = fromTx + Math.round(ddx * k);
+      sy = fromTy + Math.round(ddy * k);
+      if (tileBlocked(sx, sy)) return; // el tile clampeado cae bloqueado: no pintar
+    }
+    sc.room.send("drag", { x: sx, y: sy });
     // Local instant follow (no tween fight — own tween not running during drag)
-    me.sprite.x = wx; me.sprite.y = wy;
-    me.label.x = wx; me.label.y = wy - TILE * 0.85;
+    const px = sx * TILE + TILE / 2, py = sy * TILE + TILE / 2;
+    me.sprite.x = px; me.sprite.y = py;
+    me.label.x = px; me.label.y = py - TILE * 0.85;
     const f = (me.sprite as any).faceRef;
-    if (f) { f.x = wx; f.y = wy; }
-    me.worldX = wx; me.worldY = wy;
+    if (f) { f.x = px; f.y = py; }
+    me.worldX = px; me.worldY = py;
   };
 
   scene.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {

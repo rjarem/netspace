@@ -131,6 +131,16 @@ class WorldScene extends Phaser.Scene {
       // FUERA del retry loop — si va dentro, el server puede responder antes
       // de que el listener del intento esté registrado → falso negativo.
       room.onMessage("avatar-ok", () => { (this as any).avatarOk = true; });
+      // Fix (Tito, 14-sep): fotos cruzadas no visibles — el resend del server
+      // (onJoin → client.send avatar) llega ANTES de que este listener esté
+      // registrado, porque sendAvatar() lo precede con awaits de backoff.
+      // El listener va PRIMERO, antes de cualquier await.
+      room.onMessage("avatar", (msg: { sessionId: string; photo: string }) => {
+        if (msg.sessionId === this.myId) return; // self usa copia local
+        this.applyRemotePhoto(msg.sessionId, msg.photo);
+        (this as any).remotePhotos = (this as any).remotePhotos || new Map();
+        (this as any).remotePhotos.set(msg.sessionId, msg.photo);
+      });
       const myPhoto = (window as any).__greenroom?.avatarPhoto;
       if (myPhoto) {
         let attempt = 0;
@@ -149,14 +159,6 @@ class WorldScene extends Phaser.Scene {
         };
         sendAvatar();
       }
-      // Fase 1.3: fotos de otros jugadores llegan por MENSAJE "avatar" (no schema).
-      room.onMessage("avatar", (msg: { sessionId: string; photo: string }) => {
-        if (msg.sessionId === this.myId) return; // self usa copia local
-        this.applyRemotePhoto(msg.sessionId, msg.photo);
-        (this as any).remotePhotos = (this as any).remotePhotos || new Map();
-        (this as any).remotePhotos.set(msg.sessionId, msg.photo);
-      });
-
       room.state.players.onAdd((player: any, id: string) => this.addPlayer(id, player));
       room.state.players.onRemove((_: any, id: string) => this.removePlayer(id));
 

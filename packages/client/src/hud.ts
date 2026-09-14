@@ -107,7 +107,14 @@ export function renderUserList(sc: SC) {
           sc.room?.send("move", { x: dx, y: dy });
           me2.worldX = dx * TILE + TILE / 2;
           me2.worldY = dy * TILE + TILE / 2;
+          // Fix (Tito, 14-sep): setPosition solo movía el sprite — el label y
+          // la cara quedaban en la posición anterior hasta el próximo move.
+          // Mover TODOS los targets como hace animateOwnMove (sprite+label+face).
+          const f = (me2.sprite as any).faceRef;
           me2.sprite.setPosition(me2.worldX, me2.worldY);
+          me2.label.setPosition(me2.worldX, me2.worldY - TILE * 0.85);
+          if (f) f.setPosition(me2.worldX, me2.worldY);
+          sc.tweens.killTweensOf([me2.sprite, me2.label, f].filter(Boolean));
           const cam = sc.cameras.main;
           cam.stopFollow();
           cam.centerOn(me2.worldX, me2.worldY);
