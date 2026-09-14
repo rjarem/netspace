@@ -199,21 +199,18 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       const myPhoto = (window as any).__greenroom?.avatarPhoto;
       if (myPhoto) {
         const texKey = "avatar-photo-self";
-        const apply = () => { try { face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62); } catch {} };
-        if (this.textures.exists(texKey)) {
-          // Base64 decode may still be in flight from an earlier addPlayer call.
-          const src = this.textures.get(texKey).getSourceImage() as any;
-          if (src && src.width > 0) apply();
-          else this.textures.once("onupdate", (t: any) => { if (t.key === texKey) apply(); });
-        } else {
-          this.textures.once(Phaser.Textures.Events.ADD, (t: any) => { if (t.key === texKey) apply(); });
-          this.textures.addBase64(texKey, myPhoto);
-        }
-      } else {
-        face = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
+        // Load via Image element first; only touch Phaser when fully decoded.
+        // (textures.addBase64 events race with scene creation — Tito saw the
+        // default avatar persist. This removes all event-order assumptions.)
+        const img = new Image();
+        img.onload = () => {
+          try {
+            if (!this.textures.exists(texKey)) this.textures.addImage(texKey, img);
+            face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62);
+          } catch {}
+        };
+        img.src = myPhoto;
       }
-    } else {
-      face = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
     }
     (sprite as any).faceRef = face;
     sprite.once(Phaser.GameObjects.Events.DESTROY, () => face.destroy());

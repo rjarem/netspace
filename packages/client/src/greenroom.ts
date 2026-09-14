@@ -22,6 +22,7 @@ export type GreenRoomResult = {
 export function runGreenRoom(): Promise<GreenRoomResult> {
   return new Promise((resolve) => {
     const join = document.getElementById("join")!;
+    join.style.display = "flex"; // was hidden pre-JS to avoid the old form flashing (Tito)
     join.innerHTML = `
       <h1>🟢 Antesala</h1>
       <video id="grVideo" autoplay playsinline muted
