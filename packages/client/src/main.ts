@@ -284,6 +284,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       { font: "12px system-ui", color: "#fff", backgroundColor: "#00000088", padding: { x: 4, y: 2 } }
     ).setOrigin(0.5);
     const ui: PlayerUI = { sprite, label, handle: player.handle, worldX: wx, worldY: wy, avatarColor: colorHex };
+    if (photoData) (ui as any).facePhoto = photoData; // para ensureBubble
     (ui as any).schema = player;
     (ui as any).faceRef = face;
     this.players.set(id, ui);
@@ -304,9 +305,14 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
   /** Fase 1.3/2.3: apply a dataURL to a player's face texture (decode-safe). */
   applyRemotePhoto(id: string, photo: string) {
     const p = this.players.get(id);
-    if (!p) return; // addPlayer will pick it up from remotePhotos on roster reconcile
-    const face = (p as any).faceRef as Phaser.GameObjects.Image;
-    this.setTextureFromData(face, "avatar-photo-" + id, photo);
+    if (p) {
+      const face = (p as any).faceRef as Phaser.GameObjects.Image;
+      this.setTextureFromData(face, "avatar-photo-" + id, photo);
+      (p as any).facePhoto = photo;
+      // Fix (Tito, 14-sep): la burbuja DOM es lo que el usuario ve — actualízala.
+      const bi = (p as any).bubbleImg as HTMLImageElement | undefined;
+      if (bi) bi.src = photo;
+    }
   }
 
   /** Decode a dataURL fully BEFORE touching Phaser textures (avoids the race). */
@@ -390,6 +396,12 @@ const game = new Phaser.Game({
   scale: { mode: Phaser.Scale.RESIZE },
   scene: [WorldScene],
 });
+
+// Fix (Tito, 14-sep): al rotar el teléfono quedaba media pantalla negra —
+// el canvas no seguía el cambio de orientación. RESIZE mode + refresh forzado.
+const refreshScale = () => { try { game.scale.refresh(); } catch {} };
+window.addEventListener("resize", refreshScale);
+window.addEventListener("orientationchange", () => setTimeout(refreshScale, 120));
 
 // Green Room replaces the plain handle form: permissions → devices → photo → enter.
 // Fase 3: headless probe bypass — ?probe=<handle> entra directo (sin Antesala);

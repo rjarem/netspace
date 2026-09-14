@@ -73,6 +73,13 @@ export function ensureBubble(sc: SC, p: PlayerUI, identity: string) {
     bubbleLayer(sc).appendChild(b);
     p.bubble = b;
     p.video = v;
+    // Fix (Tito, 14-sep): la burbuja siempre mostraba avatar-default.png (emoji)
+    // — la foto de cámara nunca se pintaba aquí. Exponer el <img> para que
+    // addPlayer/applyRemotePhoto lo actualicen con el dataURL.
+    p.bubbleImg = av;
+    const pd = (isMe && (window as any).__greenroom?.avatarPhoto)
+      || (sc.players.get(identity) as any)?.facePhoto || "";
+    if (pd && !isMe) { av.src = pd; }
     return b;
   }
 

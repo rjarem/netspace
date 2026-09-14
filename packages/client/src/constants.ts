@@ -43,6 +43,7 @@ export interface PlayerUI {
   worldX: number; // world px (tile center)
   worldY: number;
   bubble?: HTMLDivElement;   // video bubble overlay (T1)
+  bubbleImg?: HTMLImageElement; // <img> del avatar dentro de la burbuja
   video?: HTMLVideoElement;
   audioEl?: HTMLAudioElement; // muted fallback element for remote audio
   audioNode?: AudioNode;      // Web Audio chain when available
