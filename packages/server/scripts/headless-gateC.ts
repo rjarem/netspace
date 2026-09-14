@@ -15,15 +15,18 @@ function launchFF(handle: string, profile: string, secs: number) {
     "--headless", "--no-remote", "--profile", profile,
     `http://127.0.0.1:4175/?probe=${handle}`,
   ], { stdio: "ignore" });
-  return new Promise<void>(res => setTimeout(() => { try { proc.kill("SIGTERM"); } catch {}; res(); }, secs * 1000));
+  return new Promise<void>(res => setTimeout(() => {
+    try { proc.kill("SIGKILL"); } catch {}; // SIGTERM no mata limpio: quedan sockets zombies que reconectan
+    res();
+  }, secs * 1000));
 }
 
 async function main() {
   const round = process.argv[2] || "1";
   const secs = parseInt(process.argv[3] || "10");
   await Promise.all([
-    launchFF(`gate${round}A`, `${PROFILE_BASE}-r${round}a`, secs),
-    launchFF(`gate${round}B`, `${PROFILE_BASE}-r${round}b`, secs),
+    launchFF(`gate${round}A`, `${PROFILE_BASE}-r${round}a-${Date.now()}`, secs),
+    launchFF(`gate${round}B`, `${PROFILE_BASE}-r${round}b-${Date.now()}`, secs),
   ]);
   console.log(`round ${round} done`);
   process.exit(0);
