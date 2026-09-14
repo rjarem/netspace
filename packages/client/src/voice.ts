@@ -126,15 +126,26 @@ export function updateSpatialAudio(sc: SC) {
     for (const [id, p] of sc.players) {
       if (id === sc.myId) continue;
       const dist = Phaser.Math.Distance.Between(me.worldX, me.worldY, p.worldX, p.worldY) / TILE;
-      const vol = dist <= AUDIO_RADIUS ? 1.0
-        : dist >= AUDIO_MAX_RADIUS ? 0.0
-        : 1.0 - (dist - AUDIO_RADIUS) / (AUDIO_MAX_RADIUS - AUDIO_RADIUS);
+      // Smooth perceptual fade: full volume at ≤2 tiles → silent at 8 tiles.
+      // Old curve (1.0 until 5 tiles, 0 at 8) felt binary: voice stays intelligible
+      // at 0.3 gain, so users heard "on or off". Earlier start + exponential
+      // taper makes distance audible.
+      const t = Math.min(1, Math.max(0, (dist - 2) / (AUDIO_MAX_RADIUS - 2)));
+      const vol = Math.pow(1 - t, 1.6); // exponential taper, 1.0 → 0.0
       // Stereo pan: normalized horizontal offset (±1 at the pan range)
       const dx = (p.worldX - me.worldX) / (AUDIO_MAX_RADIUS * TILE);
       const pan = Math.max(-1, Math.min(1, dx));
       if (p.audioNode) {
-        p.audioNode.gain.gain.value = vol;
-        p.audioNode.panner.pan.value = pan;
+        // Belt-and-braces: resume ctx every frame (Chrome mobile suspends aggressively)
+        if (p.audioNode.ctx.state === "suspended") p.audioNode.ctx.resume().catch(() => {});
+        // setTargetAtTime = click-free ramp (~80ms time constant)
+        try {
+          p.audioNode.gain.gain.setTargetAtTime(vol, p.audioNode.ctx.currentTime, 0.08);
+          p.audioNode.panner.pan.setTargetAtTime(pan, p.audioNode.ctx.currentTime, 0.08);
+        } catch {
+          p.audioNode.gain.gain.value = vol;
+          p.audioNode.panner.pan.value = pan;
+        }
       } else if (p.audioEl) {
         (p.audioEl as any).volume = vol;
       }
