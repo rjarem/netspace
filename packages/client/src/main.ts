@@ -124,26 +124,17 @@ class WorldScene extends Phaser.Scene {
           // Fase 5a (auditor, H14): bloqueo DURO por versión. Un bundle viejo
           // contra server nuevo antes seguía en sesión degradada (síntoma:
           // "los movimientos no se reflejaban"). Ahora: overlay de recarga.
-          const mine = (import.meta as any).env?.VITE_BUILD_SHA || "";
-          if (mine && sha !== "unknown" && mine !== sha) {
-            console.warn("BUILD MISMATCH: cliente", mine, "≠ server", sha);
-            // Señal de deploy nuevo EN ESTE navegador: si serverBuild cambió
-            // respecto a la última visita, auto-reload UNA vez (caché de HTML
-            // viejo). Si tras recargar sigue igual, es mismatch estructural
-            // (cliente y server de commits distintos) → overlay manual.
-            const last = localStorage.getItem("gr-server-build");
-            if (last && last !== sha) {
-              localStorage.setItem("gr-server-build", sha);
-              location.reload();
-              return;
-            }
-            localStorage.setItem("gr-server-build", sha);
-            if (last === undefined) {
-              // primera visita con mismatch: solo overlay manual
-            }
-            showReloadOverlay(sha);
-          } else {
-            localStorage.setItem("gr-server-build", sha);
+          // Fase 5a (H14, v4 final): detectar deploy NUEVO, no sha exacto.
+          // El sha embebido en el bundle nunca coincide con el BUILD_SHA del
+          // compose (el build corre antes del commit final / amend cambia el
+          // sha). La señal REAL de sesión degradada es: el serverBuild de esta
+          // visita difiere del que este navegador vio la última vez.
+          const prev = localStorage.getItem("gr-server-build");
+          localStorage.setItem("gr-server-build", sha);
+          if (prev && sha !== "unknown" && prev !== sha) {
+            console.warn("SERVER BUILD CHANGED:", prev, "→", sha);
+            location.reload(); // auto-reload UNA vez (caché de HTML viejo)
+            return;
           }
           res();
         };
@@ -421,9 +412,8 @@ const game = new Phaser.Game({
   scene: [WorldScene],
 });
 
-// Fase 5a (H14): overlay bloqueante "Actualiza la página" cuando el build del
-// cliente ≠ serverBuild. No rejoin automático (regla dura de guards): el
-// usuario recarga consciente.
+// Fase 5a (H14, v4): overlay manual si el usuario sigue en una sesión degradada
+// tras el auto-reload (reservado; el flujo principal es auto-reload una vez).
 function showReloadOverlay(serverSha: string) {
   if (document.getElementById("versionOverlay")) return;
   const ov = document.createElement("div");
