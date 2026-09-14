@@ -91,16 +91,47 @@ class WorldScene extends Phaser.Scene {
       // versión ahora es server→client: el server anuncia su build SHA en el
       // state (serverBuild) y el cliente solo lo loggea.
       console.log("v2b: disabled");
-      // Fase 0.3: loggear el build SHA que anuncia el server (handshake server→client).
-      room.onStateChange.once?.((st: any) => console.log("connected to", st?.serverBuild));
-      // fallback inmediato si el state ya llegó antes del listener:
-      setTimeout(() => console.log("connected to", (room.state as any)?.serverBuild), 300);
+      // Fase 1.2: handshake server→client — el cliente espera el PRIMER
+      // onStateChange (no timeout fijo) y loggea el build SHA del server.
+      // NUNCA rejoin: si el SHA no está en allow-list, solo se deshabilitan
+      // features (aquí: ninguna por ahora) y queda marcado en consola.
+      await new Promise<void>((res) => {
+        const done = (st: any) => {
+          const sha = st?.serverBuild || (room.state as any)?.serverBuild || "unknown";
+          console.log("connected to", sha);
+          res();
+        };
+        room.onStateChange.once(done);
+        setTimeout(() => done((room.state as any)), 3000); // safety net, no rejoin
+      });
       this.room = room;
       (window as any).__grScene = this; // debug/diagnostics hook (prod-safe: read-only)
       this.myId = room.sessionId;
-      // Fase 2b: relay my Antesala photo to everyone (one-shot, server-capped 60KB)
+      // Fase 2.1: avatar POST-JOIN, después del handshake onStateChange (foto
+      // fuera del schema — Fase 1.3). Reintento exponencial con ack avatar-ok.
       const myPhoto = (window as any).__greenroom?.avatarPhoto;
-      if (myPhoto) room.send("avatar", { photo: myPhoto });
+      if (myPhoto) {
+        let attempt = 0;
+        const sendAvatar = async () => {
+          while (attempt < 4 && !(this as any).avatarOk) {
+            room.send("avatar", { photo: myPhoto });
+            const ok = await new Promise<boolean>((res) => {
+              const t = setTimeout(() => res(false), 1000 * Math.pow(2, attempt));
+              room.onMessage("avatar-ok", () => { clearTimeout(t); res(true); });
+            });
+            if (ok) { (this as any).avatarOk = true; break; }
+            attempt++;
+          }
+        };
+        sendAvatar();
+      }
+      // Fase 1.3: fotos de otros jugadores llegan por MENSAJE "avatar" (no schema).
+      room.onMessage("avatar", (msg: { sessionId: string; photo: string }) => {
+        if (msg.sessionId === this.myId) return; // self usa copia local
+        this.applyRemotePhoto(msg.sessionId, msg.photo);
+        (this as any).remotePhotos = (this as any).remotePhotos || new Map();
+        (this as any).remotePhotos.set(msg.sessionId, msg.photo);
+      });
 
       room.state.players.onAdd((player: any, id: string) => this.addPlayer(id, player));
       room.state.players.onRemove((_: any, id: string) => this.removePlayer(id));
@@ -205,37 +236,14 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     const wx = player.x * TILE + TILE / 2;
     const wy = player.y * TILE + TILE / 2;
     const sprite = this.add.rectangle(wx, wy, TILE * 0.7, TILE * 0.7, color, 1);
-    // Avatar: photo from Antesala — self uses local copy, others from relayed state.
+    // Avatar: photo from Antesala — self uses local copy, others arrive via
+    // the "avatar" MESSAGE (Fase 1.3 — no longer in the synced schema).
     let face: Phaser.GameObjects.Image = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
-    // Fase 2b: everyone's avatar shows their Antesala photo (relayed via state).
-    // For SELF prefer the local copy (instant); others come from player.avatarPhoto.
-    const photoData = (isMe && (window as any).__greenroom?.avatarPhoto) || player.avatarPhoto || "";
+    const localPhoto = (isMe && (window as any).__greenroom?.avatarPhoto) || "";
+    const msgPhoto = (!(isMe) && ((this as any).remotePhotos as Map<string, string> | undefined)?.get(id)) || "";
+    const photoData = localPhoto || msgPhoto || "";
     if (photoData) {
-      const texKey = "avatar-photo-" + id;
-      // Load via Image element first; only touch Phaser when fully decoded.
-      // (textures.addBase64 events race with scene creation — Tito saw the
-      // default avatar persist. This removes all event-order assumptions.)
-      const img = new Image();
-      img.onload = () => {
-        try {
-          if (!this.textures.exists(texKey)) this.textures.addImage(texKey, img);
-          face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62);
-        } catch {}
-      };
-      img.src = photoData;
-      // Late-join photo arrival: schema syncs after onAdd — apply when it lands.
-      if (!isMe && !player.avatarPhoto) {
-        const poll = setInterval(() => {
-          const p2 = this.room?.state?.players.get(id);
-          if (p2?.avatarPhoto && p2.avatarPhoto !== photoData) {
-            clearInterval(poll);
-            const img2 = new Image();
-            img2.onload = () => { try { face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62); } catch {} };
-            img2.src = p2.avatarPhoto;
-          }
-        }, 400);
-        setTimeout(() => clearInterval(poll), 5000);
-      }
+      this.setTextureFromData(face, "avatar-photo-" + id, photoData);
     }
     (sprite as any).faceRef = face;
     sprite.once(Phaser.GameObjects.Events.DESTROY, () => face.destroy());
@@ -249,6 +257,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     ).setOrigin(0.5);
     const ui: PlayerUI = { sprite, label, handle: player.handle, worldX: wx, worldY: wy, avatarColor: colorHex };
     (ui as any).schema = player;
+    (ui as any).faceRef = face;
     this.players.set(id, ui);
     // Schema 2.x: the players-map onChange does NOT fire on field updates —
     // per-player instance onChange is the reliable per-tick position signal.
@@ -262,6 +271,27 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       // My bubble: colored circle immediately; video attaches when cam publishes
       this.ensureBubble(ui, id);
     }
+  }
+
+  /** Fase 1.3/2.3: apply a dataURL to a player's face texture (decode-safe). */
+  applyRemotePhoto(id: string, photo: string) {
+    const p = this.players.get(id);
+    if (!p) return; // addPlayer will pick it up from remotePhotos on roster reconcile
+    const face = (p as any).faceRef as Phaser.GameObjects.Image;
+    this.setTextureFromData(face, "avatar-photo-" + id, photo);
+  }
+
+  /** Decode a dataURL fully BEFORE touching Phaser textures (avoids the race). */
+  setTextureFromData(face: Phaser.GameObjects.Image, texKey: string, data: string) {
+    if (!data) return;
+    const img = new Image();
+    img.onload = () => {
+      try {
+        if (!this.textures.exists(texKey)) this.textures.addImage(texKey, img);
+        face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62);
+      } catch {}
+    };
+    img.src = data;
   }
 
   /** Per-field update for any player (fires for BOTH self and remotes in schema 2.x). */

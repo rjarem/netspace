@@ -23,6 +23,19 @@ const gameServer = new Server({
     maxPayload: 1024 * 1024,
   }),
 });
-gameServer.define("world", WorldRoom);
-
-gameServer.listen(PORT).then(() => console.log(`[netspace] listening on :${PORT}`));
+// Fase 1.1: matchmake determinista — UNA sala "world" por server-instance.
+// autoDispose OFF: la sala vive mientras viva el server; un blip de socket o
+// el último cliente yéndose NUNCA dispara una sala nueva (causa del split).
+gameServer.define("world", WorldRoom, { autoDispose: false });
+gameServer.listen(PORT).then(async () => {
+  console.log(`[netspace] listening on :${PORT}`);
+  // Fase 1.1: crear la sala nombrada al boot (criterio: creada exactamente una vez).
+  try {
+    const colyseusMod: any = await import("colyseus");
+    const mm = colyseusMod.matchMaker || colyseusMod.default?.matchMaker;
+    await mm.createRoom("world", {});
+    console.log("world named room created");
+  } catch (e) {
+    console.error("world named room create failed:", (e as Error).message);
+  }
+});
