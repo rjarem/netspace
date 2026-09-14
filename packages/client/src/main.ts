@@ -88,6 +88,9 @@ class WorldScene extends Phaser.Scene {
       const room = (await client.joinOrCreate("world", { token: btoa(`dev:${handle}`) })) as Room<any>;
       this.room = room;
       this.myId = room.sessionId;
+      // Fase 2b: relay my Antesala photo to everyone (one-shot, server-capped 60KB)
+      const myPhoto = (window as any).__greenroom?.avatarPhoto;
+      if (myPhoto) room.send("avatar", { photo: myPhoto });
 
       room.state.players.onAdd((player: any, id: string) => this.addPlayer(id, player));
       room.state.players.onRemove((_: any, id: string) => this.removePlayer(id));
@@ -192,24 +195,31 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     const wx = player.x * TILE + TILE / 2;
     const wy = player.y * TILE + TILE / 2;
     const sprite = this.add.rectangle(wx, wy, TILE * 0.7, TILE * 0.7, color, 1);
-    // Avatar: photo from Green Room for SELF (local texture); others keep the
-    // default PNG until server-relayed photos land (Fase 2b).
+    // Avatar: photo from Antesala — self uses local copy, others from relayed state.
     let face: Phaser.GameObjects.Image = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
-    if (isMe) {
-      const myPhoto = (window as any).__greenroom?.avatarPhoto;
-      if (myPhoto) {
-        const texKey = "avatar-photo-self";
-        // Load via Image element first; only touch Phaser when fully decoded.
-        // (textures.addBase64 events race with scene creation — Tito saw the
-        // default avatar persist. This removes all event-order assumptions.)
-        const img = new Image();
-        img.onload = () => {
-          try {
-            if (!this.textures.exists(texKey)) this.textures.addImage(texKey, img);
-            face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62);
-          } catch {}
-        };
-        img.src = myPhoto;
+    // Fase 2b: everyone's avatar shows their Antesala photo (relayed via state).
+    // For SELF prefer the local copy (instant); others come from player.avatarPhoto.
+    const photoData = (isMe && (window as any).__greenroom?.avatarPhoto) || player.avatarPhoto || "";
+    if (photoData) {
+      const texKey = "avatar-photo-" + id;
+      // Load via Image element first; only touch Phaser when fully decoded.
+      // (textures.addBase64 events race with scene creation — Tito saw the
+      // default avatar persist. This removes all event-order assumptions.)
+      const img = new Image();
+      img.onload = () => {
+        try {
+          if (!this.textures.exists(texKey)) this.textures.addImage(texKey, img);
+          face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62);
+        } catch {}
+      };
+      img.src = photoData;
+      // Late-join photo arrival: schema syncs after onAdd — re-check once.
+      if (!isMe && !player.avatarPhoto) {
+        const poll = setInterval(() => {
+          const p2 = this.room?.state?.players.get(id);
+          if (p2?.avatarPhoto) { clearInterval(poll); if (!this.players.has(id) || this.players.get(id) === p2) return; }
+        }, 400);
+        setTimeout(() => clearInterval(poll), 5000);
       }
     }
     (sprite as any).faceRef = face;

@@ -20,6 +20,7 @@ class PlayerState extends Schema {
         this.handle = "";
         this.role = "attendee";
         this.avatarStyle = "default";
+        this.avatarPhoto = ""; // Fase 2b: dataURL (jpeg ~10-30KB) relayed to all clients
         this.x = 2;
         this.y = 2;
         this.micOn = false;
@@ -36,6 +37,9 @@ __decorate([
 __decorate([
     type("string")
 ], PlayerState.prototype, "avatarStyle", void 0);
+__decorate([
+    type("string")
+], PlayerState.prototype, "avatarPhoto", void 0);
 __decorate([
     type("float32")
 ], PlayerState.prototype, "x", void 0);
@@ -149,6 +153,17 @@ export class WorldRoom extends Room {
                 player.micOn = msg.micOn;
             if (typeof msg.camOn === "boolean")
                 player.camOn = msg.camOn;
+        });
+        // Fase 2b: one-shot avatar photo upload at join. Capped at 60KB of dataURL
+        // (client sends ~256px jpeg q0.82 ≈ 15-30KB) to keep the state payload sane.
+        this.onMessage("avatar", (client, msg) => {
+            const player = this.state.players.get(client.sessionId);
+            if (!player || player.avatarPhoto)
+                return; // set once per session
+            if (typeof msg?.photo === "string" && msg.photo.startsWith("data:image/") && msg.photo.length <= 60_000) {
+                player.avatarPhoto = msg.photo;
+                console.log(`[avatar] ${player.handle} photo ${(msg.photo.length / 1024).toFixed(1)}KB`);
+            }
         });
     }
     async onAuth(client, options) {
