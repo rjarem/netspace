@@ -127,19 +127,23 @@ class WorldScene extends Phaser.Scene {
           const mine = (import.meta as any).env?.VITE_BUILD_SHA || "";
           if (mine && sha !== "unknown" && mine !== sha) {
             console.warn("BUILD MISMATCH: cliente", mine, "≠ server", sha);
-            // Un auto-reload silencioso resuelve el caso normal (bundle viejo
-            // cacheado): el HTML sale de la caché, pero /assets/* son
-            // immutable + index.html no-store → reload trae el bundle nuevo.
-            const key = "gr-build-mismatch";
-            const seen = sessionStorage.getItem(key);
-            if (seen === mine + "|" + sha) {
-              showReloadOverlay(sha); // persiste tras reload → overlay manual
-            } else {
-              sessionStorage.setItem(key, mine + "|" + sha);
+            // Señal de deploy nuevo EN ESTE navegador: si serverBuild cambió
+            // respecto a la última visita, auto-reload UNA vez (caché de HTML
+            // viejo). Si tras recargar sigue igual, es mismatch estructural
+            // (cliente y server de commits distintos) → overlay manual.
+            const last = localStorage.getItem("gr-server-build");
+            if (last && last !== sha) {
+              localStorage.setItem("gr-server-build", sha);
               location.reload();
+              return;
             }
+            localStorage.setItem("gr-server-build", sha);
+            if (last === undefined) {
+              // primera visita con mismatch: solo overlay manual
+            }
+            showReloadOverlay(sha);
           } else {
-            sessionStorage.removeItem("gr-build-mismatch");
+            localStorage.setItem("gr-server-build", sha);
           }
           res();
         };
