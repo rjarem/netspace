@@ -29,7 +29,9 @@ class WorldScene extends Phaser.Scene {
   lockAt = 0;
   halo!: Phaser.GameObjects.Arc;
   keyState: { left: boolean; right: boolean; up: boolean; down: boolean } = { left: false, right: false, up: false, down: false }; // DEPRECATED v2 — kept for type compat, never set
-  proximity: Record<string, number> = {};
+  // Fase 5a: `proximity` y el broadcast server-side ELIMINADOS — la suscripción
+  // de audio/video se reevalúa localmente cada 500ms (updateSpatialAudio) con
+  // distancias locales, y el volumen espacial es continuo por frame.
   private subThrottle = 0;
   ulLast = 0;
   pollT = 0;
@@ -179,11 +181,6 @@ class WorldScene extends Phaser.Scene {
       room.state.players.onAdd((player: any, id: string) => this.addPlayer(id, player));
       room.state.players.onRemove((_: any, id: string) => this.removePlayer(id));
 
-      room.onMessage("proximity", (data: Record<string, Record<string, number>>) => {
-        this.proximity = data[this.myId] || {};
-        this.updateProximityVisuals();
-        this.updateSubscriptions(); // T4: subscribe only to nearby video/audio
-      });
       room.onMessage("livekit", (msg: any) => {
         console.log("[livekit]", msg.isViewer ? "viewer" : "publisher", msg.zoneId);
         this.pushDbg("livekit-msg:" + msg.zoneId + ":" + (msg.isViewer ? "viewer" : "pub"));
@@ -363,8 +360,6 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
   updateProximityVisuals() {
     // now handled in updateSpatialAudio (per-frame, continuous)
   }
-
-
   update() {
     if (this.players.size === 0) return;
     const me = this.players.get(this.myId);

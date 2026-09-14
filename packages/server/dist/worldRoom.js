@@ -8,7 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 import colyseus from "colyseus";
 const { Server, Room, ServerError } = colyseus;
 import { Schema, MapSchema, type } from "@colyseus/schema";
-import { computeProximity, validateMove, inZone, } from "@netspace/shared";
+import { validateMove, inZone, } from "@netspace/shared";
 import { defaultMap } from "./world.js";
 import { mintLiveKitToken } from "./livekit.js";
 // Drag & drop: max tiles per throttled drag update (anti-teleport guard).
@@ -113,6 +113,7 @@ export class WorldRoom extends Room {
         this.liveKitApiSecret = "";
         // Fase 1.3: avatar photos fuera del schema — memoria server-side, sessionId → dataURL
         this.avatarPhotos = new Map();
+        // Fase 5a (escala): broadcastProximity() ELIMINADO — sin O(N²) cada 200ms.
         /** Mint a LiveKit token when zone membership changes (audience ↔ stage). */
         this.lastZoneOf = new Map();
     }
@@ -126,13 +127,21 @@ export class WorldRoom extends Room {
         this.liveKitApiKey = process.env.LIVEKIT_API_KEY || "";
         this.liveKitApiSecret = process.env.LIVEKIT_API_SECRET || "";
         // Proximity broadcast tick — 5 times/sec
-        this.setSimulationInterval(() => this.broadcastProximity(), 200);
+        // Fase 5a (escala): broadcast "proximity" ELIMINADO — el cliente reevalúa
+        // suscripciones de audio/video localmente (distancias por frame). Esto
+        // quita O(N²) mensajes cada 200ms del server.
+        // (Los tokens LiveKit ya se refrescan en onMove y onJoin — sin tick.)
         this.onMessage("move", (client, msg) => {
             const player = this.state.players.get(client.sessionId);
             if (!player)
                 return;
             const from = { x: player.x, y: player.y };
             const to = validateMove(from, { x: msg.x, y: msg.y }, this.map, player.role);
+            // Fase 5a (escala): cap anti-teleport también en "move" — un cliente
+            // comprometido podía saltar cualquier distancia con un solo mensaje.
+            const mdist = Math.hypot(to.x - from.x, to.y - from.y);
+            if (mdist > DRAG_MAX_TILES)
+                return; // move también es por pasos pequeños
             player.x = to.x;
             player.y = to.y;
             this.updateZoneFlags(player);
@@ -211,9 +220,16 @@ export class WorldRoom extends Room {
         player.handle = auth?.handle ?? "invitado";
         player.role = (auth?.role ?? "attendee");
         player.avatarStyle = ["blue", "green", "orange", "purple"][this.clients.length % 4];
-        // Spawn outside all restricted zones
-        player.x = 4 + this.clients.length;
-        player.y = 4;
+        // Spawn outside all restricted zones. Fase 5a (escala): spawn con wrap —
+        // cuando la fila llena el ancho útil, el siguiente usuario reaparece en
+        // x=4 de una fila inferior (y+=4), nunca encima de otro ni en zona restringida.
+        const n = this.clients.length;
+        player.x = 4 + (n % 12);
+        player.y = 4 + 4 * Math.floor(n / 12);
+        if (player.y > this.map.h - 5) {
+            player.y = 4;
+            player.x = 4 + ((n + 5) % 12);
+        }
         this.state.players.set(client.sessionId, player);
         // Fase 1.3: late-joiner recibe las fotos de TODOS los que ya están.
         for (const [sid, photo] of this.avatarPhotos) {
@@ -251,22 +267,6 @@ export class WorldRoom extends Room {
     }
     updateZoneFlags(player) {
         this.updateZoneVisibility(player);
-    }
-    /** Proximity volumes broadcast to every client 5x/sec. */
-    broadcastProximity() {
-        const positions = new Map();
-        for (const [id, p] of this.state.players) {
-            positions.set(id, { x: p.x, y: p.y });
-        }
-        const prox = computeProximity(positions);
-        const payload = {};
-        for (const [id, m] of prox) {
-            const obj = {};
-            for (const [t, v] of m)
-                obj[t] = v;
-            payload[id] = obj;
-        }
-        this.broadcast("proximity", payload);
     }
     maybeRefreshLiveKitToken(client, player) {
         const p = { x: player.x, y: player.y };

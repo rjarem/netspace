@@ -4,6 +4,20 @@ import { TILE, APP_VERSION, AUDIO_RADIUS, AUDIO_MAX_RADIUS, PlayerUI } from "./c
 
 type SC = any; // WorldScene (kept loose to avoid circular imports)
 
+// Fase 5a (escala): UN AudioContext compartido para todas las pistas remotas.
+// Chrome tiene límite de ~6 AudioContexts por página — con N usuarios hablando
+// se agotaban y las pistas nuevas quedaban mudas.
+let sharedAudioCtx: AudioContext | null = null;
+export function getSharedAudioCtx(): AudioContext {
+  if (!sharedAudioCtx) sharedAudioCtx = new AudioContext();
+  const ctx = sharedAudioCtx;
+  const resume = () => { if (ctx.state === "suspended") ctx.resume().catch(() => {}); };
+  resume();
+  window.addEventListener("pointerdown", resume);
+  window.addEventListener("keydown", resume);
+  return ctx;
+}
+
 
 export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneId: string; isViewer?: boolean }) {
     if (!msg.token || !msg.url) return;
@@ -84,13 +98,7 @@ export function onRemoteAudio(sc: SC, identity: string, track: any) {
     // The track is NOT attached to a playing element (double audio); instead we
     // mute-attach a hidden element to keep the MediaStream alive in some browsers.
     try {
-      const ctx = new AudioContext();
-      // Chrome/Safari create the context SUSPENDED until a user gesture — resume now
-      // and also on the next pointer/keydown as a belt-and-braces.
-      const resume = () => { if (ctx.state === "suspended") ctx.resume().catch(() => {}); };
-      resume();
-      window.addEventListener("pointerdown", resume, { once: true });
-      window.addEventListener("keydown", resume, { once: true });
+      const ctx = getSharedAudioCtx();
       // Keep the MediaStream alive: muted hidden element (Chrome mutes WebAudio-only streams
       // in some versions when no element is attached).
       const keepAlive = document.createElement("audio");

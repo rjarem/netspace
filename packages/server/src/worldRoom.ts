@@ -4,7 +4,7 @@ import type { Client } from "colyseus";
 const { Server, Room, ServerError } = colyseus;
 import { Schema, MapSchema, type } from "@colyseus/schema";
 import {
-  computeProximity, validateMove, inZone, canEnter,
+  validateMove, inZone, canEnter,
   AUDIO_RADIUS, AUDIO_MAX_RADIUS, VIDEO_GROUP_MAX,
   type WorldMap, type UserRole, type Position,
 } from "@netspace/shared";
@@ -86,13 +86,20 @@ export class WorldRoom extends Room<WorldState> {
     this.liveKitApiSecret = process.env.LIVEKIT_API_SECRET || "";
 
     // Proximity broadcast tick — 5 times/sec
-    this.setSimulationInterval(() => this.broadcastProximity(), 200);
+    // Fase 5a (escala): broadcast "proximity" ELIMINADO — el cliente reevalúa
+    // suscripciones de audio/video localmente (distancias por frame). Esto
+    // quita O(N²) mensajes cada 200ms del server.
+    // (Los tokens LiveKit ya se refrescan en onMove y onJoin — sin tick.)
 
     this.onMessage("move", (client, msg: MoveMsg) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
       const from = { x: player.x, y: player.y };
       const to = validateMove(from, { x: msg.x, y: msg.y }, this.map, player.role as UserRole);
+      // Fase 5a (escala): cap anti-teleport también en "move" — un cliente
+      // comprometido podía saltar cualquier distancia con un solo mensaje.
+      const mdist = Math.hypot(to.x - from.x, to.y - from.y);
+      if (mdist > DRAG_MAX_TILES) return; // move también es por pasos pequeños
       player.x = to.x;
       player.y = to.y;
       this.updateZoneFlags(player);
@@ -169,9 +176,13 @@ export class WorldRoom extends Room<WorldState> {
     player.handle = auth?.handle ?? "invitado";
     player.role = (auth?.role ?? "attendee") as UserRole;
     player.avatarStyle = ["blue", "green", "orange", "purple"][this.clients.length % 4];
-    // Spawn outside all restricted zones
-    player.x = 4 + this.clients.length;
-    player.y = 4;
+    // Spawn outside all restricted zones. Fase 5a (escala): spawn con wrap —
+    // cuando la fila llena el ancho útil, el siguiente usuario reaparece en
+    // x=4 de una fila inferior (y+=4), nunca encima de otro ni en zona restringida.
+    const n = this.clients.length;
+    player.x = 4 + (n % 12);
+    player.y = 4 + 4 * Math.floor(n / 12);
+    if (player.y > this.map.h - 5) { player.y = 4; player.x = 4 + ((n + 5) % 12); }
     this.state.players.set(client.sessionId, player);
     // Fase 1.3: late-joiner recibe las fotos de TODOS los que ya están.
     for (const [sid, photo] of this.avatarPhotos) {
@@ -214,21 +225,8 @@ export class WorldRoom extends Room<WorldState> {
     this.updateZoneVisibility(player);
   }
 
-  /** Proximity volumes broadcast to every client 5x/sec. */
-  broadcastProximity() {
-    const positions = new Map<string, Position>();
-    for (const [id, p] of this.state.players) {
-      positions.set(id, { x: p.x, y: p.y });
-    }
-    const prox = computeProximity(positions);
-    const payload: Record<string, Record<string, number>> = {};
-    for (const [id, m] of prox) {
-      const obj: Record<string, number> = {};
-      for (const [t, v] of m) obj[t] = v;
-      payload[id] = obj;
-    }
-    this.broadcast("proximity", payload);
-  }
+  // Fase 5a (escala): broadcastProximity() ELIMINADO — sin O(N²) cada 200ms.
+
 
   /** Mint a LiveKit token when zone membership changes (audience ↔ stage). */
   lastZoneOf = new Map<string, string>();
