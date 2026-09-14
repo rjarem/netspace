@@ -134,7 +134,19 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
     micSel.onchange = openStream;
 
     goBtn.onclick = () => {
-      const handle = (handleIn.value || "invitado-" + Math.floor(Math.random() * 999)).trim();
+      // Validation (Tito: users must not slip in without completing steps)
+      const handle = handleIn.value.trim();
+      if (!handle) {
+        status.textContent = "⚠️ Falta tu handle — escríbelo para entrar.";
+        status.style.color = "#ffb347";
+        handleIn.focus();
+        return;
+      }
+      if (!photo && stream) {
+        status.textContent = "⚠️ Falta tu foto de avatar — pulsa 📷 Tomar foto.";
+        status.style.color = "#ffb347";
+        return;
+      }
       try { cancelAnimationFrame(meterRaf); } catch {}
       try { audioCtx?.close(); } catch {}
       stopStream();

@@ -194,18 +194,21 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     const sprite = this.add.rectangle(wx, wy, TILE * 0.7, TILE * 0.7, color, 1);
     // Avatar: photo from Green Room for SELF (local texture); others keep the
     // default PNG until server-relayed photos land (Fase 2b).
-    let face: Phaser.GameObjects.Image;
+    let face: Phaser.GameObjects.Image = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
     if (isMe) {
       const myPhoto = (window as any).__greenroom?.avatarPhoto;
       if (myPhoto) {
         const texKey = "avatar-photo-self";
-        if (!this.textures.exists(texKey)) this.textures.addBase64(texKey, myPhoto);
-        face = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
-        this.textures.once(Phaser.Textures.Events.ADD, (tex: any) => {
-          if (tex.key === texKey) {
-            face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62);
-          }
-        });
+        const apply = () => { try { face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62); } catch {} };
+        if (this.textures.exists(texKey)) {
+          // Base64 decode may still be in flight from an earlier addPlayer call.
+          const src = this.textures.get(texKey).getSourceImage() as any;
+          if (src && src.width > 0) apply();
+          else this.textures.once("onupdate", (t: any) => { if (t.key === texKey) apply(); });
+        } else {
+          this.textures.once(Phaser.Textures.Events.ADD, (t: any) => { if (t.key === texKey) apply(); });
+          this.textures.addBase64(texKey, myPhoto);
+        }
       } else {
         face = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
       }
