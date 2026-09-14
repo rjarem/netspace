@@ -20,7 +20,8 @@ class PlayerState extends Schema {
         this.handle = "";
         this.role = "attendee";
         this.avatarStyle = "default";
-        this.avatarPhoto = ""; // Fase 2b: dataURL (jpeg ~10-30KB) relayed to all clients
+        // Fase 1.3 (auditoría): avatar dataURL FUERA del schema sincronizado — viaja
+        // por mensaje separado "avatar" (broadcast). Schema budget: PlayerState <1KB.
         this.x = 2;
         this.y = 2;
         this.micOn = false;
@@ -37,9 +38,6 @@ __decorate([
 __decorate([
     type("string")
 ], PlayerState.prototype, "avatarStyle", void 0);
-__decorate([
-    type("string")
-], PlayerState.prototype, "avatarPhoto", void 0);
 __decorate([
     type("float32")
 ], PlayerState.prototype, "x", void 0);
@@ -58,12 +56,16 @@ __decorate([
 class WorldState extends Schema {
     constructor() {
         super(...arguments);
+        this.serverBuild = ""; // Fase 0.3: build SHA anunciado server→client
         this.players = new MapSchema();
         this.mapName = defaultMap.name;
         this.theme = "corporate";
         this.eventName = "NetSpace Demo";
     }
 }
+__decorate([
+    type("string")
+], WorldState.prototype, "serverBuild", void 0);
 __decorate([
     type({ map: PlayerState })
 ], WorldState.prototype, "players", void 0);
@@ -109,11 +111,17 @@ export class WorldRoom extends Room {
         this.liveKitHost = "";
         this.liveKitApiKey = "";
         this.liveKitApiSecret = "";
+        // Fase 1.3: avatar photos fuera del schema — memoria server-side, sessionId → dataURL
+        this.avatarPhotos = new Map();
         /** Mint a LiveKit token when zone membership changes (audience ↔ stage). */
         this.lastZoneOf = new Map();
     }
     onCreate(options) {
         this.setState(new WorldState());
+        // Fase 0.3: self-identification — el server anuncia su build SHA en el state.
+        // Env var BUILD_SHA la inyecta el Dockerfile/compose en el deploy.
+        this.state.serverBuild = process.env.BUILD_SHA || "dev-unknown";
+        console.log(`[build] serverBuild=${this.state.serverBuild} roomId=pre-create`);
         this.liveKitHost = process.env.LIVEKIT_HOST || "";
         this.liveKitApiKey = process.env.LIVEKIT_API_KEY || "";
         this.liveKitApiSecret = process.env.LIVEKIT_API_SECRET || "";
@@ -156,13 +164,31 @@ export class WorldRoom extends Room {
         });
         // Fase 2b: one-shot avatar photo upload at join. Capped at 60KB of dataURL
         // (client sends ~256px jpeg q0.82 ≈ 15-30KB) to keep the state payload sane.
+        // Version handshake: clients ping "v2b" — only servers with the 2b build
+        // (maxPayload fix + avatar relay) answer. Lets clients detect and leave
+        // stale containers (orphans behind nginx round-robin) and rejoin healthy ones.
+        this.onMessage("v2b", (client) => client.send("v2b", { ok: true }));
         this.onMessage("avatar", (client, msg) => {
             const player = this.state.players.get(client.sessionId);
-            if (!player || player.avatarPhoto)
-                return; // set once per session
-            if (typeof msg?.photo === "string" && msg.photo.startsWith("data:image/") && msg.photo.length <= 60_000) {
-                player.avatarPhoto = msg.photo;
-                console.log(`[avatar] ${player.handle} photo ${(msg.photo.length / 1024).toFixed(1)}KB`);
+            if (!player)
+                return;
+            // Fase 1.3: el avatar ya NO vive en el schema — se guarda en memoria y se
+            // BROADCASTea a todos (los que ya están + los que lleguen vía onJoin).
+            const photo = typeof msg?.photo === "string" ? msg.photo : "";
+            if (photo.length > 1024) {
+                console.warn(JSON.stringify({
+                    ts: new Date().toISOString(), event: "avatar-oversize",
+                    roomId: this.roomId, sessionId: client.sessionId,
+                    sizeKB: +(photo.length / 1024).toFixed(1), build: this.state.serverBuild,
+                }));
+            }
+            if (photo.startsWith("data:image/") && photo.length <= 60_000) {
+                this.avatarPhotos.set(client.sessionId, photo);
+                // Broadcast: a TODOS los clientes, incluyendo el propio (consistencia).
+                this.broadcast("avatar", { sessionId: client.sessionId, photo });
+                // Fase 2.2: ack explícito por mensaje (cliente reintenta exponencial).
+                client.send("avatar-ok", { bytes: photo.length });
+                console.log(`[avatar] ${player.handle} photo ${(photo.length / 1024).toFixed(1)}KB broadcast n=${this.clients.length}`);
             }
         });
     }
@@ -189,13 +215,35 @@ export class WorldRoom extends Room {
         player.x = 4 + this.clients.length;
         player.y = 4;
         this.state.players.set(client.sessionId, player);
+        // Fase 1.3: late-joiner recibe las fotos de TODOS los que ya están.
+        for (const [sid, photo] of this.avatarPhotos) {
+            client.send("avatar", { sessionId: sid, photo });
+        }
         // F2 voice: emit the first LiveKit token immediately on join (spawn zone),
         // otherwise attendees never cross a zone boundary and never receive one.
         this.maybeRefreshLiveKitToken(client, player);
-        console.log(`[join] ${player.handle} (${player.role})`);
+        // Fase 0.2: logging estructurado (auditoría) — JSON por evento.
+        console.log(JSON.stringify({
+            ts: new Date().toISOString(),
+            event: "join",
+            roomId: this.roomId,
+            sessionId: client.sessionId,
+            handle: player.handle,
+            remoteAddr: client._remoteAddress || "unknown",
+            build: this.state.serverBuild,
+        }));
     }
     onLeave(client) {
         this.state.players.delete(client.sessionId);
+        this.avatarPhotos.delete(client.sessionId); // Fase 1.3: no filtrar fotos de sesiones muertas
+        // Fase 0.2: logging estructurado
+        console.log(JSON.stringify({
+            ts: new Date().toISOString(),
+            event: "leave",
+            roomId: this.roomId,
+            sessionId: client.sessionId,
+            build: this.state.serverBuild,
+        }));
     }
     updateZoneVisibility(player) {
         const p = { x: player.x, y: player.y };
