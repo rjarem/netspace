@@ -87,6 +87,7 @@ class WorldScene extends Phaser.Scene {
     try {
       const room = (await client.joinOrCreate("world", { token: btoa(`dev:${handle}`) })) as Room<any>;
       this.room = room;
+      (window as any).__grScene = this; // debug/diagnostics hook (prod-safe: read-only)
       this.myId = room.sessionId;
       // Fase 2b: relay my Antesala photo to everyone (one-shot, server-capped 60KB)
       const myPhoto = (window as any).__greenroom?.avatarPhoto;
@@ -213,11 +214,16 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
         } catch {}
       };
       img.src = photoData;
-      // Late-join photo arrival: schema syncs after onAdd — re-check once.
+      // Late-join photo arrival: schema syncs after onAdd — apply when it lands.
       if (!isMe && !player.avatarPhoto) {
         const poll = setInterval(() => {
           const p2 = this.room?.state?.players.get(id);
-          if (p2?.avatarPhoto) { clearInterval(poll); if (!this.players.has(id) || this.players.get(id) === p2) return; }
+          if (p2?.avatarPhoto && p2.avatarPhoto !== photoData) {
+            clearInterval(poll);
+            const img2 = new Image();
+            img2.onload = () => { try { face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62); } catch {} };
+            img2.src = p2.avatarPhoto;
+          }
         }, 400);
         setTimeout(() => clearInterval(poll), 5000);
       }
