@@ -28,6 +28,7 @@ class PlayerState extends Schema {
 }
 
 class WorldState extends Schema {
+  @type("string") serverBuild = ""; // Fase 0.3: build SHA anunciado server→client
   @type({ map: PlayerState }) players = new MapSchema<PlayerState>();
   @type("string") mapName = defaultMap.name;
   @type("string") theme = "corporate";
@@ -73,6 +74,10 @@ export class WorldRoom extends Room<WorldState> {
 
   onCreate(options: any) {
     this.setState(new WorldState());
+    // Fase 0.3: self-identification — el server anuncia su build SHA en el state.
+    // Env var BUILD_SHA la inyecta el Dockerfile/compose en el deploy.
+    this.state.serverBuild = process.env.BUILD_SHA || "dev-unknown";
+    console.log(`[build] serverBuild=${this.state.serverBuild} roomId=pre-create`);
     this.liveKitHost = process.env.LIVEKIT_HOST || "";
     this.liveKitApiKey = process.env.LIVEKIT_API_KEY || "";
     this.liveKitApiSecret = process.env.LIVEKIT_API_SECRET || "";
@@ -114,9 +119,23 @@ export class WorldRoom extends Room<WorldState> {
 
     // Fase 2b: one-shot avatar photo upload at join. Capped at 60KB of dataURL
     // (client sends ~256px jpeg q0.82 ≈ 15-30KB) to keep the state payload sane.
+    // Version handshake: clients ping "v2b" — only servers with the 2b build
+    // (maxPayload fix + avatar relay) answer. Lets clients detect and leave
+    // stale containers (orphans behind nginx round-robin) and rejoin healthy ones.
+    this.onMessage("v2b", (client) => client.send("v2b", { ok: true }));
+
     this.onMessage("avatar", (client, msg: { photo?: string }) => {
       const player = this.state.players.get(client.sessionId);
       if (!player || player.avatarPhoto) return; // set once per session
+      // Fase 0.2: warn si payload grande (auditoría: threshold 1KB — lo normal
+      // post-Fase-2 será mensaje pequeño o nada; 30KB es el anti-patrón actual).
+      if (typeof msg?.photo === "string" && msg.photo.length > 1024) {
+        console.warn(JSON.stringify({
+          ts: new Date().toISOString(), event: "avatar-oversize",
+          roomId: this.roomId, sessionId: client.sessionId,
+          sizeKB: +(msg.photo.length / 1024).toFixed(1), build: this.state.serverBuild,
+        }));
+      }
       if (typeof msg?.photo === "string" && msg.photo.startsWith("data:image/") && msg.photo.length <= 60_000) {
         player.avatarPhoto = msg.photo;
         console.log(`[avatar] ${player.handle} photo ${(msg.photo.length / 1024).toFixed(1)}KB`);
@@ -149,11 +168,28 @@ export class WorldRoom extends Room<WorldState> {
     // F2 voice: emit the first LiveKit token immediately on join (spawn zone),
     // otherwise attendees never cross a zone boundary and never receive one.
     this.maybeRefreshLiveKitToken(client, player);
-    console.log(`[join] ${player.handle} (${player.role})`);
+    // Fase 0.2: logging estructurado (auditoría) — JSON por evento.
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      event: "join",
+      roomId: this.roomId,
+      sessionId: client.sessionId,
+      handle: player.handle,
+      remoteAddr: (client as any)._remoteAddress || "unknown",
+      build: this.state.serverBuild,
+    }));
   }
 
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
+    // Fase 0.2: logging estructurado
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(),
+      event: "leave",
+      roomId: this.roomId,
+      sessionId: client.sessionId,
+      build: this.state.serverBuild,
+    }));
   }
 
   updateZoneVisibility(player: PlayerState) {

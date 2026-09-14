@@ -86,6 +86,15 @@ class WorldScene extends Phaser.Scene {
     const client = new Client(server);
     try {
       const room = (await client.joinOrCreate("world", { token: btoa(`dev:${handle}`) })) as Room<any>;
+      // Fase 0 (auditoría 14-sep): v2b-guard DESHABILITADO. Los guards client-side
+      // NUNCA hacen leave+rejoin — solo deshabilitan features. El handshake de
+      // versión ahora es server→client: el server anuncia su build SHA en el
+      // state (serverBuild) y el cliente solo lo loggea.
+      console.log("v2b: disabled");
+      // Fase 0.3: loggear el build SHA que anuncia el server (handshake server→client).
+      room.onStateChange.once?.((st: any) => console.log("connected to", st?.serverBuild));
+      // fallback inmediato si el state ya llegó antes del listener:
+      setTimeout(() => console.log("connected to", (room.state as any)?.serverBuild), 300);
       this.room = room;
       (window as any).__grScene = this; // debug/diagnostics hook (prod-safe: read-only)
       this.myId = room.sessionId;
