@@ -144,7 +144,21 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
       const vw = video.videoWidth, vh = video.videoHeight;
       const side = Math.min(vw, vh);
       ctx.drawImage(video, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, w, h);
-      photo = canvas.toDataURL("image/jpeg", 0.82);
+      // Compresión iterativa (fix socket 1009 en prod): el payload del websocket
+      // tiene un límite efectivo ~4.5KB en prod (uWS no respeta maxPayload de 1MB).
+      // Re-comprime bajando calidad hasta que el dataURL quepa con holgura.
+      let quality = 0.82;
+      photo = canvas.toDataURL("image/jpeg", quality);
+      while (photo.length > 4600 && quality > 0.2) {
+        quality -= 0.12;
+        photo = canvas.toDataURL("image/jpeg", quality);
+      }
+      // Último recurso: reducir resolución a la mitad y recomprimir
+      if (photo.length > 4600) {
+        canvas.width = 128; canvas.height = 128;
+        ctx.drawImage(video, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, 128, 128);
+        photo = canvas.toDataURL("image/jpeg", 0.5);
+      }
       snapOk.style.display = "inline";
       snapBtn.textContent = "📷 Repetir foto";
       refreshHints();
