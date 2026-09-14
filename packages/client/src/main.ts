@@ -9,6 +9,7 @@ import { onRemoteVideo, removeRemoteVideo, ensureBubble, showLocalPreview, updat
 import { renderMinimap, renderUserList } from "./hud";
 import { onServerPosition, tick, animateOwnMove } from "./movement";
 import { initControls } from "./controls";
+import { runGreenRoom, type GreenRoomResult } from "./greenroom";
 
 /**
  * WorldScene — orchestrator. Method bodies live in voice.ts / bubbles.ts / hud.ts /
@@ -191,9 +192,26 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     const wx = player.x * TILE + TILE / 2;
     const wy = player.y * TILE + TILE / 2;
     const sprite = this.add.rectangle(wx, wy, TILE * 0.7, TILE * 0.7, color, 1);
-    // Generic avatar placeholder: PNG served from the client assets
-    // (/avatar-default.png) until photo-avatars (camera snapshot at signup) land.
-    const face = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
+    // Avatar: photo from Green Room for SELF (local texture); others keep the
+    // default PNG until server-relayed photos land (Fase 2b).
+    let face: Phaser.GameObjects.Image;
+    if (isMe) {
+      const myPhoto = (window as any).__greenroom?.avatarPhoto;
+      if (myPhoto) {
+        const texKey = "avatar-photo-self";
+        if (!this.textures.exists(texKey)) this.textures.addBase64(texKey, myPhoto);
+        face = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
+        this.textures.once(Phaser.Textures.Events.ADD, (tex: any) => {
+          if (tex.key === texKey) {
+            face.setTexture(texKey).setDisplaySize(TILE * 0.62, TILE * 0.62);
+          }
+        });
+      } else {
+        face = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
+      }
+    } else {
+      face = this.add.image(wx, wy, "avatar-default").setDisplaySize(TILE * 0.62, TILE * 0.62);
+    }
     (sprite as any).faceRef = face;
     sprite.once(Phaser.GameObjects.Events.DESTROY, () => face.destroy());
     if (isMe) {
@@ -290,14 +308,11 @@ const game = new Phaser.Game({
   scene: [WorldScene],
 });
 
-(document.getElementById("go") as HTMLButtonElement).onclick = () => {
-  const input = document.getElementById("handle") as HTMLInputElement;
-  const handle = (input.value || "invitado-" + Math.floor(Math.random() * 999)).trim();
-  (document.getElementById("join") as HTMLElement).style.display = "none";
+// Green Room replaces the plain handle form: permissions → devices → photo → enter.
+const gr = runGreenRoom();
+gr.then((res: GreenRoomResult) => {
+  // Expose for bubbles: photo dataURL becomes the remote-visible avatar image
+  (window as any).__greenroom = res;
   const scene = game.scene.scenes[0] as WorldScene;
-  scene.connect(handle);
-};
-
-(document.getElementById("handle") as HTMLInputElement).addEventListener("keydown", (e) => {
-  if (e.key === "Enter") (document.getElementById("go") as HTMLButtonElement).click();
+  scene.connect(res.handle);
 });

@@ -1,0 +1,157 @@
+// Green Room: pre-lobby screen — permissions, device selection, mic meter,
+// avatar photo capture. Runs BEFORE connecting to Colyseus/LiveKit.
+// Session 2026-09-13 (Fase 2 of plan v2). Design decisions:
+// - getUserMedia FIRST (labels only appear after permission granted), then enumerateDevices
+// - Camera preview doubles as the avatar-photo capture (no upload flow)
+// - Ambient-sound toggle is a POST-filter hook point (future noise suppression)
+// - Fallback: no camera/denied → skip photo, keep default avatar, never block entry
+// - Stores chosen deviceIds on window.__greenroom for connect() to consume
+
+export type GreenRoomResult = {
+  handle: string;
+  avatarPhoto: string | null; // dataURL (jpeg) or null
+  camDeviceId: string | null;
+  micDeviceId: string | null;
+  micStream: MediaStream | null; // kept alive briefly; connect() re-uses via constraints
+};
+
+/**
+ * Transform the plain #join panel into a Green Room.
+ * Returns a promise that resolves when the user clicks [Entrar al Evento].
+ */
+export function runGreenRoom(): Promise<GreenRoomResult> {
+  return new Promise((resolve) => {
+    const join = document.getElementById("join")!;
+    join.innerHTML = `
+      <h1>🟢 Green Room</h1>
+      <video id="grVideo" autoplay playsinline muted
+        style="width:280px;height:210px;background:#0b0e16;border-radius:10px;border:1px solid #2a3350;object-fit:cover"></video>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button id="grSnap" style="padding:8px 14px;border-radius:8px;border:1px solid #4f7cff;background:#182036;color:#dbe4ff;font-size:14px;cursor:pointer">📷 Tomar foto de avatar</button>
+        <span id="grSnapOk" style="font-size:13px;color:#6be38a;display:none">✅ Foto lista</span>
+      </div>
+      <canvas id="grCanvas" style="display:none"></canvas>
+      <select id="grCam" style="padding:8px;border-radius:8px;background:#1a1d27;color:#fff;border:1px solid #333;width:280px"></select>
+      <select id="grMic" style="padding:8px;border-radius:8px;background:#1a1d27;color:#fff;border:1px solid #333;width:280px"></select>
+      <div style="width:280px;height:10px;background:#1a1d27;border-radius:5px;border:1px solid #333;overflow:hidden">
+        <div id="grMeter" style="height:100%;width:0%;background:linear-gradient(90deg,#4f7cff,#6be38a);transition:width .08s"></div>
+      </div>
+      <label style="font-size:13px;color:#9aa4bf;display:flex;gap:6px;align-items:center">
+        <input type="checkbox" id="grAmbient" checked> Filtro de sonido ambiental (reducción de ruido)
+      </label>
+      <input id="grHandle" placeholder="Tu handle" maxlength="20"
+        style="padding:10px 16px;border-radius:8px;border:1px solid #333;background:#1a1d27;color:#fff;font-size:16px;width:248px;text-align:center" />
+      <button id="grGo" style="padding:10px 24px;border-radius:8px;border:none;background:#4f7cff;color:#fff;font-size:16px;cursor:pointer">Entrar al Evento</button>
+      <div id="grStatus" style="font-size:13px;color:#888">Pide permisos de cámara y micrófono…</div>
+    `;
+
+    const video = document.getElementById("grVideo") as HTMLVideoElement;
+    const camSel = document.getElementById("grCam") as HTMLSelectElement;
+    const micSel = document.getElementById("grMic") as HTMLSelectElement;
+    const meter = document.getElementById("grMeter") as HTMLDivElement;
+    const status = document.getElementById("grStatus")!;
+    const snapBtn = document.getElementById("grSnap") as HTMLButtonElement;
+    const snapOk = document.getElementById("grSnapOk")!;
+    const canvas = document.getElementById("grCanvas") as HTMLCanvasElement;
+    const handleIn = document.getElementById("grHandle") as HTMLInputElement;
+    const ambient = document.getElementById("grAmbient") as HTMLInputElement;
+    const goBtn = document.getElementById("grGo") as HTMLButtonElement;
+
+    let stream: MediaStream | null = null;
+    let photo: string | null = null;
+    let audioCtx: AudioContext | null = null;
+    let meterRaf = 0;
+
+    const fillDevices = () => {
+      navigator.mediaDevices.enumerateDevices().then((devs) => {
+        camSel.innerHTML = "";
+        micSel.innerHTML = "";
+        for (const d of devs) {
+          const opt = document.createElement("option");
+          opt.value = d.deviceId;
+          opt.textContent = d.label || (d.kind === "videoinput" ? "Cámara" : "Micrófono");
+          (d.kind === "videoinput" ? camSel : d.kind === "audioinput" ? micSel : null)?.appendChild(opt);
+        }
+      }).catch(() => {});
+    };
+
+    const stopStream = () => { stream?.getTracks().forEach(t => t.stop()); stream = null; };
+
+    const openStream = async () => {
+      try {
+        stopStream();
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: camSel.value ? { deviceId: { exact: camSel.value } } : true,
+          audio: micSel.value ? { deviceId: { exact: micSel.value } } : true,
+        });
+        video.srcObject = stream;
+        status.textContent = "Listo — encuádrate, toma tu foto y entra.";
+        fillDevices(); // labels now available
+        startMeter();
+      } catch (e) {
+        status.textContent = "⚠️ Sin cámara/micrófono — entrarás con avatar default.";
+        video.style.display = "none";
+        snapBtn.style.display = "none";
+      }
+    };
+
+    const startMeter = () => {
+      try {
+        const at = stream!.getAudioTracks()[0];
+        if (!at) return;
+        audioCtx = new AudioContext();
+        const src = audioCtx.createMediaStreamSource(new MediaStream([at]));
+        const analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        src.connect(analyser);
+        const buf = new Uint8Array(analyser.frequencyBinCount);
+        const loop = () => {
+          analyser.getByteFrequencyData(buf);
+          let sum = 0; for (const v of buf) sum += v * v;
+          const rms = Math.sqrt(sum / buf.length);
+          meter.style.width = Math.min(100, rms * 1.8) + "%";
+          meterRaf = requestAnimationFrame(loop);
+        };
+        loop();
+      } catch { /* meter is cosmetic */ }
+    };
+
+    snapBtn.onclick = () => {
+      if (!stream) return;
+      const w = 256, h = 256;
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      // center-crop the 4:3 preview into a square, zoomed on the face area
+      const vw = video.videoWidth, vh = video.videoHeight;
+      const side = Math.min(vw, vh);
+      ctx.drawImage(video, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, w, h);
+      photo = canvas.toDataURL("image/jpeg", 0.82);
+      snapOk.style.display = "inline";
+      snapBtn.textContent = "📷 Repetir foto";
+    };
+
+    camSel.onchange = openStream;
+    micSel.onchange = openStream;
+
+    goBtn.onclick = () => {
+      const handle = (handleIn.value || "invitado-" + Math.floor(Math.random() * 999)).trim();
+      try { cancelAnimationFrame(meterRaf); } catch {}
+      try { audioCtx?.close(); } catch {}
+      stopStream();
+      join.style.display = "none";
+      resolve({
+        handle,
+        avatarPhoto: photo,
+        camDeviceId: camSel.value || null,
+        micDeviceId: micSel.value || null,
+        micStream: null,
+      });
+    };
+
+    handleIn.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") goBtn.click();
+    });
+
+    openStream();
+  });
+}
