@@ -91,9 +91,12 @@ class WorldScene extends Phaser.Scene {
     };
     window.onerror = (msg) => { plog("onerror: " + String(msg).slice(0, 200)); };
     plog("connect() called, isProbe=" + isProbe);
-    // Production: Colyseus lives on api.turedvirtual.vip; dev: localhost:2567
+    // Producción: Colyseus en api.turedvirtual.vip; dev: localhost:2567.
+    // El bypass ?probe= acepta ?probe=<handle>&probeUrl=<ws-url> para apuntar
+    // a PROD desde los gates headless (default: server local 127.0.0.1:2567).
+    const probeUrl = new URLSearchParams(location.search).get("probeUrl");
     const server = isProbe
-      ? "ws://127.0.0.1:2567"
+      ? (probeUrl || "ws://127.0.0.1:2567")
       : location.port === "5173"
       ? "ws://localhost:2567"
       : `${proto}://api.${location.hostname.replace(/^play\./, "")}`;
