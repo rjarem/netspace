@@ -19,7 +19,36 @@
 
 ---
 
-## 1. Decisión sobre Fase 4 (deploy de lo GREEN)
+## 1. Fase 4 — COMPLETADA (14-sep-2026, noche)
+
+**Estado: CERRADA Y VALIDADA.** Se ejecutaron 6 deploys (`49ee498` → `462af1f`
+→ `658f69a` → `4e5d7e7` → `2fa90a0` → `49926f4`), todos verificados contra prod
+(bundle servido == dist local, probelog 200, probes desde `scripts/` contra
+`wss://api.turedvirtual.vip`). Verificación del auditor en esta sesión: HEAD
+`49926f4`, árbol limpio, todo pusheado, `index-DQmY4KHz.js` idéntico en prod y
+dist, `/api/health` OK. Prueba real de Tito con 3 dispositivos SIMULTÁNEOS
+(PC + 2 móviles, build `49926f4`): fotos cruzadas ✅, movimiento en tiempo real
+✅, landscape ✅, pinch-zoom ✅. Las 6 condiciones del veredicto original se
+cumplieron (rollback guardado en `/home/assistant/gr-rollback-compose-14sep.yaml`,
+pin `02d3616`; BUILD_SHA inyectado; DEV_NO_AUTH=1 documentado como desviación
+aceptada por Tito).
+
+**Pendiente formal (no bloqueante):** Gate C (Firefox headless 5 rounds) contra
+PROD no se ejecutó — la prueba de 3 dispositivos simultáneos de Tito cubre el
+criterio de convergencia con evidencia más fuerte que el gate headless, pero el
+gate C prod debe correrse en la próxima suite de gates para cerrar el criterio
+formal. **Backlog diferido por Tito:** (a) "muro invisible" en drag,
+intermitente (rebota 1ª vez, al repetir pasa) — análisis en sección 2, H15;
+(b) fade de audio poco notorio — validar con 2+ personas hablando.
+
+**Decisiones de Tito a las 4 preguntas de criterio del auditor (14-sep):**
+auth dev se mantiene hasta 5b (problema conocido documentado); DMs ELIMINADOS
+de la visión (tarjeta de contacto opt-in como sustituto futuro); hardening
+antes que UI de producción; zonas como JSON ahora + editor visual antes de
+abrir a terceros (híbrido).
+
+<details>
+<summary>Veredicto original de Fase 4 (histórico)</summary>
 
 **VEREDICTO: AUTORIZADA CON CONDICIONES.** Los gates A–D están 4/4 PASS con
 outputs reales (handoff gates-cd-v2), el rollback es trivial (compose.update de
@@ -60,6 +89,8 @@ handoff tiene UN punto que NO es ejecutable tal cual y hay higiene pendiente.
 - Rotación de secretos (JWT_SECRET, ADMIN_TOKEN) y salida de LiveKit de `--dev`:
   van en la Fase 5b (hardening) con su propia verificación. Meterlos aquí
   infla el delta del deploy sin gate que los cubra.
+
+</details>
 
 ---
 
@@ -127,6 +158,41 @@ Severidad: 🔴 crítico · 🟠 alto · 🟡 medio · ⚪ bajo.
   Regla de proceso: el reporte de gates debe incluir `git status --short` del
   tree exacto que se gateó.
 
+### Hallazgos de la Fase 4 en producción (14-sep, 6 deploys)
+
+- **H13 🔴 — El techo real de mensaje WS es ~4.5KB, no 1MB.** El fix de Fase 2b
+  (`maxPayload` 1MB en WebSocketTransport) NO se respeta en prod: uWS mata el
+  socket con código 1009 a partir de ~4.5KB de mensaje (descubierto en deploy
+  `462af1f`). Mitigación vigente: compresión iterativa de la foto en
+  `greenroom.ts`. **Problema residual:** el objetivo de compresión (~4.6KB)
+  queda SIN MARGEN contra el umbral medido (~4.5KB) — bajar el objetivo a
+  ≤4KB en el próximo build y, en Fase 5a, atacar la raíz (configurar el
+  maxPayload real de uWS o documentar el techo y validarlo con probe).
+  Consecuencia: el cap de 60KB del handler `avatar` es nominal; el techo
+  efectivo es el de uWS.
+- **H14 🟡 — Sin bloqueo duro por versión.** El handshake `serverBuild` solo
+  loggea/deshabilita features. Durante los 6 deploys del día, Tito probó con
+  bundles mezclados entre dispositivos y el síntoma ("los movimientos no se
+  reflejaban") era indistinguible de un bug real. Fix barato en 5a: el cliente
+  compara su build contra un endpoint `/api/version` (o el `serverBuild` del
+  state) y, si hay mismatch, muestra overlay "Actualiza la página" con
+  recarga forzada — en vez de seguir en una sesión degradada.
+- **H15 🟡 — "Muro invisible" en drag: el cap de 8 tiles se evalúa contra DOS
+  referencias distintas.** El cliente clampea contra su posición LOCAL
+  optimista; el server (`worldRoom.ts` handler `drag`) mide `dist` contra su
+  última posición APLICADA. Con paquetes en vuelo (throttle `DRAG_SEND_MS`)
+  o un tween de resync en curso, las dos referencias divergen: el server
+  rechaza aunque el cliente se creyó dentro del cap → rebote; al reintentar,
+  las posiciones ya convergieron → pasa. La hipótesis del handoff (carrera
+  tween/paquete en vuelo) es el SÍNTOMA de esta causa. Diagnóstico propuesto
+  (barato, server-side): loggear cada rechazo de drag con
+  `{sessionId, from, to, dist}` y reproducir con dispositivo real. Fixes
+  candidatos (decidir tras el diagnóstico): (a) pacing encadenado en el
+  cliente — cada envío ≤8 tiles del ANTERIOR ENVIADO, no de la posición del
+  dedo; (b) ventana acumulativa server-side (distancia/tiempo) en vez de cap
+  por paquete; (c) al iniciar drag, cancelar/completar el tween de resync y
+  re-baseline. Backlog diferido por Tito.
+
 ---
 
 ## 3. Plan de desarrollo por fases (priorización del auditor)
@@ -136,16 +202,24 @@ quita techos de escala y seguridad, porque TODAS las features de la visión
 asumen más usuarios y terceros; (3) roles/moderación es la base técnica de
 megáfono, broadcast, áreas y cola; (4) lo caro (recording) al final.
 
-### Fase 4 — Deploy de lo GREEN — AUTORIZADA (condiciones en sección 1)
-- Objetivo: prod corre HEAD con sala nombrada + fix de race + gates.
-- Riesgo: **bajo** (rollback = un compose.update).
+### Fase 4 — Deploy de lo GREEN — ✅ COMPLETADA (14-sep-2026, ver sección 1)
+- Objetivo cumplido: prod corre HEAD `49926f4` con sala nombrada, fix de race,
+  gates, fotos cruzadas, pinch-zoom y landscape verificados por Tito en 3
+  dispositivos simultáneos.
+- Riesgo ejecutado: **bajo** (rollback nunca necesario; sigue disponible).
 
 ### Fase 5 — Hardening de escala y seguridad (ANTES de features nuevas)
 **5a. Escala (riesgo: medio-bajo)**
-- Objetivo: eliminar los cuellos H3, H4, H5, H6.
+- Objetivo: eliminar los cuellos H3, H4, H5, H6 + los nuevos H13, H14.
 - Cambios: borrar `broadcastProximity` del server (el cliente ya calcula todo
   local); UN AudioContext compartido en `voice.ts`; cap anti-teleport en `move`;
-  spawn con wrap.
+  spawn con wrap; **raíz del techo uWS (H13):** configurar el maxPayload real
+  de uWS o fijar el techo documentado + bajar el objetivo de compresión de
+  foto a ≤4KB (margen); **bloqueo duro por versión (H14):** overlay
+  "Actualiza la página" cuando el build del cliente ≠ `serverBuild`;
+  **chequeo automatizado de dist fresco** (pre-push o en run-gates.sh: fallar
+  si `packages/server/dist` es más viejo que `src` — la lección 1 del día no
+  puede depender de disciplina).
 - Dependencias: ninguna.
 - Criterios de aceptación medibles:
   - Gate de carga nuevo: N bots headless (N≥20) en la sala, egress del server
@@ -153,6 +227,11 @@ megáfono, broadcast, áreas y cola; (4) lo caro (recording) al final.
   - Con 12 bots cercanos publicando audio, el cliente mantiene UN AudioContext
     y todas las voces suenan (probe con niveles de gain > 0).
   - Probe: `move` con salto de 50 tiles → rechazado; drag sigue igual.
+  - Probe: mensaje WS de 8KB → o bien pasa (uWS configurado) o bien el techo
+    documentado se valida; foto comprimida siempre ≤4KB.
+  - Cliente con build viejo contra server nuevo → overlay de recarga (no
+    sesión degradada).
+  - Gate C contra PROD ejecutado (cierra el pendiente formal de Fase 4).
 - Riesgo: **medio-bajo** (toca audio, que es lo más delicado; mitigación: gates
   de voz existentes + prueba de Tito).
 
@@ -435,3 +514,12 @@ propio). **No inventar SSO propio contra HeySummit: no lo ofrecen.**
   líneas). Veredicto de Fase 4 y las 6 condiciones se mantienen exactas.
   HeySummit: schema no re-descargable en esta sesión (Cloudflare); endpoints
   marcados para re-verificación antes de Fase 11.
+- v3 (14-sep-2026, noche): Fase 4 CERRADA tras 6 deploys verificados y prueba
+  real de Tito (3 dispositivos simultáneos). Nuevos hallazgos H13 (techo uWS
+  ~4.5KB — el maxPayload 1MB no se respeta; compresión sin margen), H14 (sin
+  bloqueo duro por versión — bundles mezclados indistinguibles de bug), H15
+  (muro invisible: cap de drag evaluado contra dos referencias — local
+  optimista vs última aplicada). Fase 5a ampliada con H13/H14 + chequeo
+  automatizado de dist fresco + Gate C prod pendiente. Decisiones de Tito
+  registradas: sin DMs, hardening antes que UI, zonas JSON→editor híbrido,
+  auth dev hasta 5b. Siguiente bloque autorizado: Fase 5a+5b.

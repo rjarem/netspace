@@ -146,15 +146,17 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
       ctx.drawImage(video, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, w, h);
       // Compresión iterativa (fix socket 1009 en prod): el payload del websocket
       // tiene un límite efectivo ~4.5KB en prod (uWS no respeta maxPayload de 1MB).
-      // Re-comprime bajando calidad hasta que el dataURL quepa con holgura.
+      // Fase 5a (auditor, H13): objetivo ≤4KB — 4.6KB era margen CERO contra el
+      // umbral de muerte (~4.5KB).
       let quality = 0.82;
+      const PHOTO_BUDGET = 4000;
       photo = canvas.toDataURL("image/jpeg", quality);
-      while (photo.length > 4600 && quality > 0.2) {
+      while (photo.length > PHOTO_BUDGET && quality > 0.2) {
         quality -= 0.12;
         photo = canvas.toDataURL("image/jpeg", quality);
       }
       // Último recurso: reducir resolución a la mitad y recomprimir
-      if (photo.length > 4600) {
+      if (photo.length > PHOTO_BUDGET) {
         canvas.width = 128; canvas.height = 128;
         ctx.drawImage(video, (vw - side) / 2, (vh - side) / 2, side, side, 0, 0, 128, 128);
         photo = canvas.toDataURL("image/jpeg", 0.5);

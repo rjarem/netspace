@@ -121,6 +121,14 @@ class WorldScene extends Phaser.Scene {
         const done = (st: any) => {
           const sha = st?.serverBuild || (room.state as any)?.serverBuild || "unknown";
           console.log("connected to", sha);
+          // Fase 5a (auditor, H14): bloqueo DURO por versión. Un bundle viejo
+          // contra server nuevo antes seguía en sesión degradada (síntoma:
+          // "los movimientos no se reflejaban"). Ahora: overlay de recarga.
+          const mine = (import.meta as any).env?.VITE_BUILD_SHA || "";
+          if (mine && sha !== "unknown" && mine !== sha) {
+            console.warn("BUILD MISMATCH: cliente", mine, "≠ server", sha);
+            showReloadOverlay(sha);
+          }
           res();
         };
         room.onStateChange.once(done);
@@ -396,6 +404,31 @@ const game = new Phaser.Game({
   scale: { mode: Phaser.Scale.RESIZE },
   scene: [WorldScene],
 });
+
+// Fase 5a (H14): overlay bloqueante "Actualiza la página" cuando el build del
+// cliente ≠ serverBuild. No rejoin automático (regla dura de guards): el
+// usuario recarga consciente.
+function showReloadOverlay(serverSha: string) {
+  if (document.getElementById("versionOverlay")) return;
+  const ov = document.createElement("div");
+  ov.id = "versionOverlay";
+  ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(15,17,23,.97);" +
+    "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;" +
+    "color:#e6e6e6;font-family:system-ui,sans-serif;text-align:center;padding:24px;";
+  const h = document.createElement("div");
+  h.textContent = "🔄 Hay una versión nueva";
+  h.style.cssText = "font-size:22px;font-weight:600;";
+  const p = document.createElement("div");
+  p.textContent = "La app se actualizó. Toca el botón para continuar.";
+  p.style.cssText = "font-size:14px;color:#9aa;max-width:320px;";
+  const b = document.createElement("button");
+  b.textContent = "Actualizar ahora";
+  b.style.cssText = "padding:12px 28px;border:none;border-radius:8px;background:#4f7cff;" +
+    "color:#fff;font-size:16px;cursor:pointer;";
+  b.onclick = () => location.reload();
+  ov.append(h, p, b);
+  document.body.appendChild(ov);
+}
 
 // Fix (Tito, 14-sep): al rotar el teléfono quedaba media pantalla negra —
 // el canvas no seguía el cambio de orientación. RESIZE mode + refresh forzado.
