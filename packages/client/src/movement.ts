@@ -11,16 +11,36 @@ export function onServerPosition(sc: SC, id: string, player: any) {
     const wx = player.x * TILE + TILE / 2;
     const wy = player.y * TILE + TILE / 2;
     if (id === sc.myId) {
-      // Server truth (rare for self — no echo). Snap only if far from sprite
-      // (rejected move) to avoid fighting the optimistic animation.
-      // Server truth ALWAYS wins for self: if the move was accepted this equals the
-      // optimistic tween target (no visual change); if rejected, this corrects drift.
+      // Fix (Tito, 14-sep): "muro invisible" intermitente en drag. Antes self
+      // NUNCA se resincronizaba (onPlayerInstanceChange saltaba a self), así
+      // que la deriva local vs server se acumulaba: los drags llegaban con
+      // dist>8 desde la posición REAL del server y eran rechazados en silencio
+      // → sensación de muro que a veces sí, a veces no. Ahora:
+      // 1) durante drag activo NO snap (el dedo es la verdad),
+      // 2) fuera de drag, si el server difiere mucho, snap suave (tween corto)
+      //    para re-sincronizar sin "aventón".
+      const ddx = wx - p.sprite.x, ddy = wy - p.sprite.y;
+      const far = Math.hypot(ddx, ddy) > TILE * 1.5;
       p.worldX = wx; p.worldY = wy;
+      if ((sc as any).dragging) {
+        if (!far) return; // deriva pequeña mientras arrastro: ignorar
+        // deriva grande: recalcular silenciosamente (sin mover el sprite),
+        // el próximo sendTile parte de la posición real del server.
+        return;
+      }
+      if (!far) return; // coincide con lo que pinté: no tocar
       sc.tweens.killTweensOf([p.sprite, p.label, (p.sprite as any).faceRef].filter(Boolean));
-      p.sprite.x = wx; p.sprite.y = wy;
-      const f = (p.sprite as any).faceRef;
-      if (f) { f.x = wx; f.y = wy; }
-      p.label.x = wx; p.label.y = wy - TILE * 0.85;
+      sc.tweens.add({
+        targets: [p.sprite, p.label, (p.sprite as any).faceRef].filter(Boolean),
+        x: wx, y: wy,
+        duration: 120,
+        ease: "Linear",
+        onUpdate: () => {
+          p.label.x = p.sprite.x; p.label.y = p.sprite.y - TILE * 0.85;
+          const f2 = (p.sprite as any).faceRef;
+          if (f2) { f2.x = p.sprite.x; f2.y = p.sprite.y; }
+        },
+      });
       if (
         sc.movingTo &&
         Math.round(player.x) === sc.movingTo.x &&

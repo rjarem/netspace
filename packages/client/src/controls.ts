@@ -44,12 +44,18 @@ export function initControls(sc: SC) {
   let lastPinchDist = 0;
   const PINCH_MIN_DIST = 24; // px: ignora dedos demasiado juntos
   const canvas = scene.game.canvas;
+  // Flag compartido con la escena: 2+ dedos = pinch, no movimiento.
+  const setPinching = (n: number) => {
+    (scene as any).pinching = n >= 2;
+    if (n >= 2) { (scene as any).target = null; (sc as any).target = null; (sc as any).dragging = false; }
+  };
   const pinchDist = () => {
     const pts = [...touches.values()];
     return pts.length >= 2 ? Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) : 0;
   };
   canvas.addEventListener("touchstart", (e: TouchEvent) => {
     for (const t of Array.from(e.changedTouches)) touches.set(t.identifier, { x: t.clientX, y: t.clientY });
+    setPinching(touches.size);
     if (touches.size === 2) { lastPinchDist = pinchDist(); }
   }, { passive: true });
   canvas.addEventListener("touchmove", (e: TouchEvent) => {
@@ -70,6 +76,7 @@ export function initControls(sc: SC) {
   }, { passive: false });
   const endTouch = (e: TouchEvent) => {
     for (const t of Array.from(e.changedTouches)) touches.delete(t.identifier);
+    setPinching(touches.size);
     lastPinchDist = 0;
   };
   canvas.addEventListener("touchend", endTouch, { passive: true });
@@ -127,19 +134,21 @@ export function initControls(sc: SC) {
   scene.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
     if (isOnOwnAvatar(pointer)) {
       dragging = true;
+      (sc as any).dragging = true; // visible para onServerPosition (no snap durante drag)
       sc.target = null; // cancel any click-to-move in progress
       dragStart = { x: pointer.worldX, y: pointer.worldY };
     }
   });
 
   scene.input.on("pointermove", (pointer: Phaser.Input.Pointer) => {
-    if (!dragging || !pointer.isDown) { dragging = false; return; }
+    if (!dragging || !pointer.isDown) { dragging = false; (sc as any).dragging = false; return; }
     sendTile(pointer.worldX, pointer.worldY, false);
   });
 
   scene.input.on("pointerup", (pointer: Phaser.Input.Pointer) => {
     if (!dragging) return;
     dragging = false;
+    (sc as any).dragging = false;
     // Final position: force-send so the server ends exactly where the finger did
     sendTile(pointer.worldX, pointer.worldY, true);
     // Re-sync visual to the sent tile center (avoid half-tile offsets)

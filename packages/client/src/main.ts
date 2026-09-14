@@ -68,6 +68,8 @@ class WorldScene extends Phaser.Scene {
     initControls(this);
 
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
+      // Fix (Tito, 14-sep): pinch-zoom (2 dedos) no debe mover el avatar.
+      if ((this as any).pinching) return;
       this.target = {
         x: Math.floor(pointer.worldX / TILE),
         y: Math.floor(pointer.worldY / TILE),
