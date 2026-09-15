@@ -337,6 +337,8 @@ export class WorldRoom extends Room<WorldState> {
     const norm: Record<string, { by: string; ts: number }> = {};
     for (const [h, v] of this.bannedHandles) norm[h.toLowerCase()] = v;
     try {
+      // H5 (auditor): el archivo vive en volumen (/data en prod) — asegurar dir
+      fs.mkdirSync(path.dirname(this.bansFile), { recursive: true });
       fs.writeFileSync(this.bansFile, JSON.stringify(norm, null, 2));
     } catch (e) { console.warn("[bans] save failed:", (e as Error).message); }
   }
