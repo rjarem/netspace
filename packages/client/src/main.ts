@@ -117,7 +117,23 @@ class WorldScene extends Phaser.Scene {
       // Fase 5b (criterio 9): los probes se marcan isProbe — el server les
       // niega voz (canPublish/canSubscribe false) para aislarlos de usuarios reales.
       const joinToken = invite || btoa(`dev:${handle}`);
-      const room = (await client.joinOrCreate("world", { token: joinToken, isProbe })) as Room<any>;
+      // Fase 8: matchmake determinista REAL — entrar por roomId de la sala
+      // nombrada (expuesto en /api/health). Elimina la carrera A/B: dos
+      // clientes SIEMPRE caen en la MISMA sala (causa de los splits del gate C).
+      let room: Room<any>;
+      try {
+        const hs = await fetch(server.replace(/^ws/, "http") + "/api/health").then((r) => r.json()).catch(() => null);
+        const wId = hs?.worldRoomId;
+        if (wId) {
+          room = (await client.joinById(wId, { token: joinToken, isProbe })) as Room<any>;
+          plog("joinById=" + wId + " roomId=" + room.id);
+        } else {
+          room = (await client.joinOrCreate("world", { token: joinToken, isProbe })) as Room<any>;
+        }
+      } catch (joinErr: any) {
+        // la sala nombrada pudo morir entre health y join — fallback clásico
+        room = (await client.joinOrCreate("world", { token: joinToken, isProbe })) as Room<any>;
+      }
       plog("joined roomId=" + room.id);
       // Hallazgo Tito 16-sep (auditor lo adelantó): el canvas heredaba el
       // tamaño de la ventana EN el arranque y quedaba clavado (columna
@@ -207,10 +223,19 @@ class WorldScene extends Phaser.Scene {
         const st = document.getElementById("status");
         const label: Record<string, string> = {
           mute: `🙊 ${msg.target} muteado por ${msg.by}`,
+          unmute: `🔊 ${msg.target} desmuteado por ${msg.by}`,
           unban: `✅ ${msg.target} desbaneado`,
           ban: `⛔ ${msg.target} baneado por ${msg.by}`,
           kick: `👢 ${msg.target} expulsado por ${msg.by}`,
           "mute-blocked": `🙊 Tu mic está muteado por ${msg.by} — no puedes desmutearlo`,
+          // Fase 8
+          "hand-raise": `✋ ${msg.target} pidió la palabra`,
+          "hand-lower": `${msg.target} bajó la mano`,
+          "megaphone-on": `📢 ${msg.target} está en MEGÁFONO`,
+          "megaphone-off": `Megáfono off (${msg.target})`,
+          "stage-grant": `🎤 ${msg.target} subió al escenario`,
+          "stage-revoke": `${msg.target} bajó del escenario`,
+          "broadcast": `📢 ${msg.by}: ${msg.target || ""}`,
         };
         if (st) st.textContent = label[msg.type] || `mod:${msg.type}`;
         console.log("[mod]", msg.type, msg.target || "", msg.by || "");
@@ -258,6 +283,22 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       // toggle expand only when clicking the container itself (not a pill row)
       if (ev.target === ul) ul.dataset.exp = ul.dataset.exp === "1" ? "0" : "1";
     });
+
+    // Fase 8: banner de broadcast (persistente en state — late-joiners lo ven)
+    const showBanner = (text: string) => {
+      let b = document.getElementById("gr-banner") as HTMLDivElement | null;
+      if (!text) { if (b) b.remove(); return; }
+      if (!b) {
+        b = document.createElement("div");
+        b.id = "gr-banner";
+        b.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);top:calc(8px + env(safe-area-inset-top,0px));z-index:85;max-width:92vw;background:rgba(79,124,255,.92);color:#fff;font:13px system-ui;padding:6px 14px;border-radius:8px;text-align:center;box-shadow:0 2px 8px #0006;";
+        document.body.appendChild(b);
+      }
+      b.textContent = "📢 " + text;
+    };
+    room.onMessage("banner", (msg: any) => showBanner(String(msg?.text || "")));
+    if ((room.state as any).banner) showBanner(String((room.state as any).banner));
+    room.onStateChange?.(() => showBanner(String((room.state as any).banner || "")));
 
     // Fase 7: barra de acciones flotante (mic, emojis, salir) — decisión Tito 15-sep
     try { installActionBar(this); } catch (e) { console.warn("[actionbar]", e); }

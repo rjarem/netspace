@@ -185,14 +185,26 @@ export function updateSubscriptions(sc: SC) {
     if (!sc.lkRoom) return;
     const me = sc.players.get(sc.myId);
     if (!me) return;
+    // Fase 8: megáfono — el hablante se suscribe SIEMPRE (volumen completo),
+    // igual que los inStage (stage multi-speaker).
+    const megaphone = (sc.room?.state as any)?.megaphoneBy || "";
     for (const p of sc.lkRoom.remoteParticipants.values()) {
       const sprite = sc.players.get(p.identity);
       if (!sprite) continue;
       const dist = Phaser.Math.Distance.Between(me.worldX, me.worldY, sprite.worldX, sprite.worldY) / TILE;
-      const want = dist <= AUDIO_MAX_RADIUS;
+      const isMegaphone = megaphone && p.identity === megaphone;
+      const want = isMegaphone || sprite.inStage || dist <= AUDIO_MAX_RADIUS;
       for (const pub of p.trackPublications.values()) {
         if (pub.isSubscribed !== want) {
           try { pub.setSubscribed(want); } catch { /* already in desired state */ }
+        }
+        // volumen completo para megáfono/inStage (los demás lo maneja el audio
+        // espacial en onRemoteAudio)
+        if (pub.isSubscribed && (isMegaphone || sprite.inStage)) {
+          try {
+            const el = (pub as any).attachedElements?.[0] as HTMLAudioElement | undefined;
+            if (el) el.volume = 1;
+          } catch { /* */ }
         }
       }
     }

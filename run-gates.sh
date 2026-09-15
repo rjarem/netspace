@@ -4,6 +4,9 @@
 # dist del cliente servido en :4175 (python3 -m http.server en packages/client/dist),
 # firefox headless. Imprime PASS/FAIL por gate y exit 0 solo si TODOS pasan.
 set -u
+# Endurecer runner (deuda de tooling, auditor Fase 8): firefox zombies de
+# corridas previas causaban splits intermitentes (round 4/5, "2 salas").
+pkill -9 -f firefox 2>/dev/null && sleep 2 || true
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(dirname "$SCRIPT_DIR")"   # run-gates.sh vive en el repo root; su padre no — corregir abajo
 cd "$SCRIPT_DIR"                  # repo root = donde está el propio script

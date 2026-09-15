@@ -92,7 +92,7 @@ export function renderUserList(sc: SC) {
       if (expanded) {
         const nm = document.createElement("span");
         nm.style.cssText = "font:11px system-ui;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
-        nm.textContent = (p.handle || id) + (isMeRow ? " (yo)" : "") + (p.mutedBy ? " 🙊" : "");
+        nm.textContent = (p.handle || id) + (isMeRow ? " (yo)" : "") + (p.mutedBy ? " 🙊" : "") + ((sc.room?.state as any)?.hands?.has?.(id) ? " ✋" : "") + (p.inStage ? " 🎤" : "");
         row.appendChild(nm);
       }
       // Fase 6: acciones de moderación (visibles solo si YO soy admin/mod y el

@@ -97,6 +97,57 @@ export function installActionBar(sc: SC) {
     bar.appendChild(b);
   }
 
+  // --- Fase 8: pedir la palabra (🙋) — cualquier usuario ---
+  const handBtn = document.createElement("button");
+  handBtn.title = "Pedir la palabra";
+  let handOn = false;
+  handBtn.textContent = "🙋";
+  handBtn.onclick = () => {
+    handOn = !handOn;
+    handBtn.textContent = handOn ? "✋" : "🙋";
+    handBtn.className = handOn ? "gr-hand-on" : "";
+    sc.room?.send("raiseHand", { on: handOn });
+    const st = document.getElementById("status");
+    if (st) st.textContent = handOn ? "✋ Pediste la palabra — espera a que te den paso" : "Bajaste la mano";
+  };
+  bar.appendChild(handBtn);
+
+  // --- Fase 8: megáfono (📣) y pantalla (🖥) — admin/moderator/speaker/dj/inStage ---
+  const myRole = (sc.players.get(sc.myId)?.role) || "";
+  const canStage = ["admin", "moderator", "speaker", "dj"].includes(myRole) || sc.players.get(sc.myId)?.inStage;
+  if (canStage) {
+    const megaBtn = document.createElement("button");
+    megaBtn.title = "Megáfono (tu audio llega a todos, sin importar distancia)";
+    let megaOn = false;
+    megaBtn.textContent = "📣";
+    megaBtn.onclick = () => {
+      megaOn = !megaOn;
+      megaBtn.textContent = megaOn ? "📢" : "📣";
+      megaBtn.className = megaOn ? "gr-mega-on" : "";
+      sc.room?.send("mod:megaphone", { on: megaOn });
+      const st = document.getElementById("status");
+      if (st) st.textContent = megaOn ? "📢 MEGÁFONO ON — todo el evento te oye" : "Megáfono off";
+    };
+    bar.appendChild(megaBtn);
+
+    const scrBtn = document.createElement("button");
+    scrBtn.title = "Compartir pantalla";
+    let scrOn = false;
+    scrBtn.textContent = "🖥️";
+    scrBtn.onclick = async () => {
+      try {
+        const room = sc.lkRoom;
+        if (!room?.localParticipant) return;
+        await room.localParticipant.setScreenShareEnabled(!scrOn);
+        scrOn = !scrOn;
+        scrBtn.className = scrOn ? "gr-scr-on" : "";
+        const st = document.getElementById("status");
+        if (st) st.textContent = scrOn ? "🖥️ Compartiendo pantalla" : "Pantalla compartida detenida";
+      } catch (e) { console.warn("[actionbar] screen share:", e); }
+    };
+    bar.appendChild(scrBtn);
+  }
+
   // --- Salir (rojo, decisión Tito 15-sep) ---
   const exit = document.createElement("button");
   exit.title = "Salir de la sesión";

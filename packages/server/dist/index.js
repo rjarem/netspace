@@ -4,15 +4,18 @@ import express from "express";
 import colyseus from "colyseus";
 const { Server } = colyseus;
 import { WebSocketTransport } from "@colyseus/ws-transport";
-import { WorldRoom } from "./worldRoom.js";
+import { WorldRoom, worldRooms } from "./worldRoom.js";
 import { inviteRouter } from "./invite.js";
 const PORT = parseInt(process.env.PORT || "2567");
 const app = express();
+// Fase 8: exponer el roomId de la sala nombrada — el cliente entra por ID
+// (matchmake determinista REAL; mata la carrera A/B del gate C).
 app.get("/api/health", (_req, res) => res.json({
     ok: true,
     // Auditor 16-sep: alinear con la sala real (LIVEKIT_ROOM) — el valor
     // hardcodeado "netspace" confundía la verificación de salas por entorno.
     room: process.env.LIVEKIT_ROOM || "netspace-world",
+    worldRoomId: [...worldRooms][0]?.roomId || null,
     // Fase 5b (gate-auth): expone el modo auth para que el gate sepa qué esperar.
     // devAuth=true => dev-token sin JWT entra (solo con DEV_NO_AUTH=1).
     devAuth: process.env.DEV_NO_AUTH === "1",
@@ -24,6 +27,23 @@ app.get("/api/probelog", (req, res) => {
     res.json({ ok: true });
 });
 app.use(inviteRouter());
+// Fase 8 (auditor): POST /api/mod — moderar SIN estar en la sala. Solo
+// x-admin-token. Acciones: mute|unmute|kick|ban|unban|broadcast|grant|revoke.
+app.post("/api/mod", (req, res) => {
+    const adminToken = process.env.ADMIN_TOKEN || "";
+    if (!adminToken || req.headers["x-admin-token"] !== adminToken) {
+        return res.status(401).json({ error: "unauthorized" });
+    }
+    const { action, handle, on, text } = req.body || {};
+    if (!action)
+        return res.status(400).json({ error: "missing action" });
+    const room = [...worldRooms][0];
+    if (!room)
+        return res.status(404).json({ error: "no hay sala activa" });
+    room.adminApi(String(action), String(handle || ""), on !== false, String(text || ""))
+        .then((r) => res.json({ ok: true, result: r }))
+        .catch((e) => res.status(500).json({ error: String(e?.message || e) }));
+});
 const httpServer = http.createServer(app);
 const gameServer = new Server({
     transport: new WebSocketTransport({

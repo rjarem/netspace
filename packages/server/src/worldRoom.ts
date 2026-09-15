@@ -39,6 +39,14 @@ class WorldState extends Schema {
   @type("string") mapName = defaultMap.name;
   @type("string") theme = "corporate";
   @type("string") eventName = "NetSpace Demo";
+  // Fase 8 (plan auditor v8 §7): evento
+  // - megaphoneBy: sessionId del hablante en megáfono ("" = off). Los clientes
+  //   se suscriben a su audio SIN importar distancia, a volumen completo.
+  @type("string") megaphoneBy = "";
+  // - banner: texto de broadcast persistente (visibles para late-joiners).
+  @type("string") banner = "";
+  // - hands: pedir la palabra — sessionId → ts del raise.
+  @type({ map: "string" }) hands = new MapSchema<string>();
 }
 
 // Message types
@@ -80,6 +88,10 @@ function hashToken(token: string): string {
   return h.toString(16);
 }
 
+// Fase 8: registro de salas activas para POST /api/mod (moderar sin estar en
+// la sala — caso de uso del organizador, auditor).
+export const worldRooms = new Set<WorldRoom>();
+
 export class WorldRoom extends Room<WorldState> {
   maxClients = 150;
   map: WorldMap = defaultMap;
@@ -95,8 +107,12 @@ export class WorldRoom extends Room<WorldState> {
   kickedTokens = new Set<string>();
   tokenHashBySession = new Map<string, string>();
   bansFile = path.resolve(process.env.BANS_FILE || "bans.json");
+  // Fase 8: poda de fantasmas + H6 (kickedTokens acotado)
+  pruneGhosts: ReturnType<typeof setInterval> | null = null;
+  ghostSeenAt = new Map<string, number>();
 
   onCreate(options: any) {
+    worldRooms.add(this); // Fase 8: registro para POST /api/mod
     this.setState(new WorldState());
     // Fase 0.3: self-identification — el server anuncia su build SHA en el state.
     // Env var BUILD_SHA la inyecta el Dockerfile/compose en el deploy.
@@ -210,7 +226,7 @@ export class WorldRoom extends Room<WorldState> {
     });
 
     // Fase 7: relay de emojis — broadcast a todos (los clientes los renderizan
-    // flotando sobre el avatar emisor). Rate cap: 1 emoji/s por usuario.
+    // flotando sobre el avatar del emisor). Rate cap 1/s POR USUARIO.
     const lastEmojiAt = new Map<string, number>();
     this.onMessage("emoji", (client, msg: { emoji: string }) => {
       const p = this.state.players.get(client.sessionId);
@@ -222,6 +238,80 @@ export class WorldRoom extends Room<WorldState> {
       // H7 (auditor): identificar por sessionId (handles pueden duplicarse)
       this.broadcast("emoji", { sessionId: client.sessionId, handle: p.handle, emoji: msg.emoji });
     });
+
+    // ---- Fase 8 (plan auditor v8 §7): evento ----
+
+    // Pedir la palabra: cualquier usuario; toggle propio.
+    this.onMessage("raiseHand", (client, msg: { on: boolean }) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      if (msg?.on) this.state.hands.set(client.sessionId, String(Date.now()));
+      else this.state.hands.delete(client.sessionId);
+      this.broadcast("mod-notice", { type: msg?.on ? "hand-raise" : "hand-lower", target: p.handle, by: p.handle });
+    });
+
+    // Megáfono: solo roles de moderación (o speaker) — su audio llega a todos
+    // sin importar distancia (los clientes lo suscriben a volumen completo).
+    this.onMessage("mod:megaphone", (client, msg: { on: boolean }) => {
+      const mod = this.state.players.get(client.sessionId);
+      if (!mod || !(isModerationRole(mod.role as UserRole) || mod.role === "speaker")) return;
+      this.state.megaphoneBy = msg?.on ? client.sessionId : "";
+      this.broadcast("mod-notice", { type: msg?.on ? "megaphone-on" : "megaphone-off", target: mod.handle, by: mod.handle });
+      this.logMod(client, msg?.on ? "megaphone-on" : "megaphone-off", mod.handle);
+    });
+
+    // Broadcast/banner: solo moderación. Texto vacío = limpiar banner.
+    this.onMessage("mod:broadcast", (client, msg: { text: string }) => {
+      const mod = this.state.players.get(client.sessionId);
+      if (!mod || !isModerationRole(mod.role as UserRole)) return;
+      const text = String(msg?.text || "").slice(0, 200);
+      this.state.banner = text;
+      this.broadcast("banner", { text, by: mod.handle });
+      this.logMod(client, "broadcast", text.slice(0, 40));
+    });
+
+    // Grant/revoke stage ("darle la palabra" — sube a alguien de las manos
+    // o por handle directo): inStage=true ignora la distancia de suscripción.
+    this.onMessage("mod:grant", (client, msg: { handle: string; on: boolean }) => {
+      const mod = this.state.players.get(client.sessionId);
+      if (!mod || !isModerationRole(mod.role as UserRole)) return;
+      const handle = String(msg?.handle || "");
+      const targets = this.sessionsByHandle(handle);
+      if (!targets.length && !msg?.on) return; // revoke sin target: limpiar por handle de hands
+      for (const c of targets) {
+        const t = this.state.players.get(c.sessionId);
+        if (!t) continue;
+        t.inStage = !!msg?.on;
+        if (msg?.on) this.state.hands.delete(c.sessionId);
+      }
+      // limpiar mano si estaba levantada
+      for (const [sid] of [...this.state.hands.entries()]) {
+        const p = this.state.players.get(sid);
+        if (p?.handle === handle) this.state.hands.delete(sid);
+      }
+      this.broadcast("mod-notice", { type: msg?.on ? "stage-grant" : "stage-revoke", target: handle, by: mod.handle });
+      this.logMod(client, msg?.on ? "stage-grant" : "stage-revoke", handle);
+    });
+
+    // Poda de fantasmas (auditor, Fase 8): players cuyo cliente ya no está
+    // conectado (crash sin leave — el "vpA fantasma" de Tito). Gracia 30s.
+    this.pruneGhosts = setInterval(() => {
+      const now = Date.now();
+      const live = new Set<string>();
+      for (const c of this.clients as any[]) live.add(c.sessionId);
+      for (const [sid, p] of [...this.state.players]) {
+        if (live.has(sid)) continue;
+        if (!this.ghostSeenAt.has(sid)) { this.ghostSeenAt.set(sid, now); continue; }
+        if (now - (this.ghostSeenAt.get(sid) || 0) > 30000) {
+          this.state.players.delete(sid);
+          this.ghostSeenAt.delete(sid);
+          this.state.hands.delete(sid);
+          if (this.state.megaphoneBy === sid) this.state.megaphoneBy = "";
+          console.log(`[prune] fantasma eliminado: ${p.handle}`);
+        }
+      }
+    }, 15000);
+    this.ghostSeenAt = new Map();
 
     // Fase 2b: one-shot avatar photo upload at join. Capped at 60KB of dataURL
     // (client sends ~256px jpeg q0.82 ≈ 15-30KB) to keep the state payload sane.
@@ -309,7 +399,19 @@ export class WorldRoom extends Room<WorldState> {
     const targets = this.sessionsByHandle(handle);
     for (const c of targets) {
       const th = this.tokenHashBySession.get(c.sessionId);
-      if (th) this.kickedTokens.add(th); // el MISMO token ya no vuelve a entrar
+      if (th) {
+        this.kickedTokens.add(th); // el MISMO token ya no vuelve a entrar
+        // H6 (auditor Fase 8): acotar kickedTokens — Set conserva orden de
+        // inserción; al pasar 2000, se podan los más viejos.
+        if (this.kickedTokens.size > 2000) {
+          const it = this.kickedTokens.values();
+          while (this.kickedTokens.size > 2000) {
+            const oldest = it.next();
+            if (oldest.done) break;
+            this.kickedTokens.delete(oldest.value);
+          }
+        }
+      }
       try { c.send("kicked", { by: mod.handle, kind }); } catch { /* */ }
       // H4 (auditor): sacar del LiveKit TAMBIÉN — su token vive ~6h; sin esto
       // el expulsado seguiría oyendo/hablando el evento.
@@ -351,6 +453,59 @@ export class WorldRoom extends Room<WorldState> {
     }));
   }
 
+  // Fase 8: moderación FUERA de la sala — POST /api/mod (organizador sin
+  // estar conectado). Mismas reglas de enforcement que los comandos in-room.
+  async adminApi(action: string, handle: string, on = true, text = ""): Promise<string> {
+    const admin = "HTTP-admin";
+    if (action === "mute" || action === "unmute") {
+      for (const c of this.sessionsByHandle(handle)) {
+        const t = this.state.players.get(c.sessionId);
+        if (!t) continue;
+        if (action === "mute" && on) {
+          t.mutedBy = admin;
+          t.micOn = false;
+          void muteParticipantAudio(this.liveKitApiKey, this.liveKitApiSecret, this.liveKitHost, c.sessionId, true);
+          try { c.send("mod-notice", { type: "mute-blocked", target: t.handle, by: admin }); } catch { /* */ }
+        } else {
+          t.mutedBy = "";
+        }
+      }
+      this.broadcast("mod-notice", { type: action, target: handle, by: admin });
+      return `${action}:${handle}:ok`;
+    }
+    if (action === "kick" || action === "ban") {
+      const pseudo = { sessionId: "api-mod" } as Client;
+      const pseudoMod = { handle: admin, role: "admin" } as any;
+      this.kickByHandle(pseudo, pseudoMod, handle, action === "ban" ? "ban" : "kick");
+      return `${action}:${handle}:ok`;
+    }
+    if (action === "unban") {
+      this.bannedHandles.delete(String(handle || "").toLowerCase());
+      this.saveBans();
+      return `unban:${handle}:ok`;
+    }
+    if (action === "broadcast") {
+      this.state.banner = String(text || "").slice(0, 200);
+      this.broadcast("banner", { text: this.state.banner, by: admin });
+      return `broadcast:ok`;
+    }
+    if (action === "grant" || action === "revoke") {
+      for (const c of this.sessionsByHandle(handle)) {
+        const t = this.state.players.get(c.sessionId);
+        if (t) t.inStage = action === "grant";
+      }
+      if (action === "grant") {
+        for (const [sid] of [...this.state.hands.entries()]) {
+          const p = this.state.players.get(sid);
+          if (p?.handle === handle) this.state.hands.delete(sid);
+        }
+      }
+      this.broadcast("mod-notice", { type: action === "grant" ? "stage-grant" : "stage-revoke", target: handle, by: admin });
+      return `${action}:${handle}:ok`;
+    }
+    return `unknown-action:${action}`;
+  }
+
   onJoin(client: Client, _options: any, auth?: { handle: string; role: UserRole }) {
     const player = new PlayerState();
     player.handle = auth?.handle ?? "invitado";
@@ -385,6 +540,9 @@ export class WorldRoom extends Room<WorldState> {
 
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
+    this.ghostSeenAt.delete(client.sessionId);
+    this.state.hands.delete(client.sessionId);
+    if (this.state.megaphoneBy === client.sessionId) this.state.megaphoneBy = "";
     this.avatarPhotos.delete(client.sessionId); // Fase 1.3: no filtrar fotos de sesiones muertas
     this.tokenHashBySession.delete(client.sessionId); // Fase 6: limpiar mapa de sesión
     // Fase 0.2: logging estructurado
@@ -443,5 +601,11 @@ export class WorldRoom extends Room<WorldState> {
       isViewer: !canPublish,
       mediaRef: zone?.mediaRef || "",
     });
+  }
+
+  onDispose() {
+    // Fase 8: limpiar interval de poda + registro para /api/mod
+    if (this.pruneGhosts) { clearInterval(this.pruneGhosts); this.pruneGhosts = null; }
+    worldRooms.delete(this);
   }
 }
