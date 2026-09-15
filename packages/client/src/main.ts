@@ -119,6 +119,12 @@ class WorldScene extends Phaser.Scene {
       const joinToken = invite || btoa(`dev:${handle}`);
       const room = (await client.joinOrCreate("world", { token: joinToken, isProbe })) as Room<any>;
       plog("joined roomId=" + room.id);
+      // Hallazgo Tito 16-sep (auditor lo adelantó): el canvas heredaba el
+      // tamaño de la ventana EN el arranque y quedaba clavado (columna
+      // vertical). Forzar scale.refresh() espaciado tras el join lo corrige.
+      for (const delay of [200, 800, 2000]) {
+        setTimeout(() => { try { this.game?.scale?.refresh?.(); } catch { /* */ } }, delay);
+      }
       // Fase 0 (auditoría 14-sep): v2b-guard DESHABILITADO. Los guards client-side
       // NUNCA hacen leave+rejoin — solo deshabilitan features. El handshake de
       // versión ahora es server→client: el server anuncia su build SHA en el
@@ -217,6 +223,9 @@ class WorldScene extends Phaser.Scene {
         // Volver a la Antesala con aviso — sin auto-reconnect (el token está
         // invalidado server-side; re-entrar con el mismo link daría 403).
         try { this.room?.leave(true); } catch { /* */ }
+        // H4 (auditor): desconectar TAMBIÉN la voz — el token LiveKit vive ~6h;
+        // sin esto el expulsado seguía oyendo (y hablando) el evento.
+        try { this.lkRoom?.disconnect(); } catch { /* */ }
         const ov = document.createElement("div");
         ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(15,17,23,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#e6e6e6;font-family:system-ui,sans-serif;text-align:center;padding:24px;";
         const h = document.createElement("div");

@@ -110,7 +110,6 @@ export function renderUserList(sc: SC) {
           b.addEventListener("pointerup", (e) => { e.stopPropagation(); e.preventDefault(); send(); });
           row.appendChild(b);
         };
-        const isBanned = false; // el estado de ban vive server-side; unban por comando directo
         btn("🙊", "#ffb74d", () => sc.room?.send("mod:mute", { handle: full, on: !(p as any).mutedBy }), "Mute/Unmute impuesto");
         if (myRole === "admin") {
           btn("👢", "#ff8a80", () => sc.room?.send("mod:kick", { handle: full }), "Expulsar (su token no re-entra)");

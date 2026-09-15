@@ -10,7 +10,7 @@ const { Server, Room, ServerError } = colyseus;
 import { Schema, MapSchema, type } from "@colyseus/schema";
 import { validateMove, inZone, isModerationRole, } from "@netspace/shared";
 import { defaultMap } from "./world.js";
-import { mintLiveKitToken } from "./livekit.js";
+import { mintLiveKitToken, muteParticipantAudio, removeParticipantVoice } from "./livekit.js";
 import fs from "node:fs";
 import path from "node:path";
 // Drag & drop: max tiles per throttled drag update (anti-teleport guard).
@@ -217,6 +217,12 @@ export class WorldRoom extends Room {
             target.mutedBy = msg.on ? mod.handle : "";
             if (msg.on)
                 target.micOn = false;
+            // H2 (auditor): mute REAL — silenciar la pista publicada del muteado en
+            // LiveKit (la bandera del schema sola no tocaba el audio). Y al quitar
+            // el mute, informar al cliente para que pueda republished si quiere.
+            for (const c of this.sessionsByHandle(target.handle)) {
+                void muteParticipantAudio(this.liveKitApiKey, this.liveKitApiSecret, this.liveKitHost, c.sessionId, !!msg.on);
+            }
             this.broadcast("mod-notice", {
                 type: "mute", target: target.handle, by: mod.handle, on: !!msg.on,
             });
@@ -233,7 +239,8 @@ export class WorldRoom extends Room {
             if (!mod || mod.role !== "admin")
                 return; // ban/unban: SOLO admin
             if (msg?.unban) {
-                this.bannedHandles.delete(String(msg.handle || ""));
+                // H3: normalizar — el ban se guarda en minúsculas
+                this.bannedHandles.delete(String(msg.handle || "").toLowerCase());
                 this.saveBans();
                 this.broadcast("mod-notice", { type: "unban", target: msg.handle, by: mod.handle });
                 this.logMod(client, "unban", String(msg?.handle || ""));
@@ -242,7 +249,10 @@ export class WorldRoom extends Room {
             const handle = String(msg?.handle || "");
             if (!handle || handle === mod.handle)
                 return;
-            this.bannedHandles.set(handle, { by: mod.handle, ts: Date.now() });
+            // H3 (auditor): normalizar TAMBIÉN en memoria — saveBans escribe
+            // minúsculas pero sin esto el in-memory check "casevictim" no veía el
+            // ban guardado como "CaseVictim".
+            this.bannedHandles.set(handle.toLowerCase(), { by: mod.handle, ts: Date.now() });
             this.saveBans();
             this.broadcast("mod-notice", { type: "ban", target: handle, by: mod.handle });
             this.logMod(client, "ban", handle);
@@ -261,7 +271,8 @@ export class WorldRoom extends Room {
             lastEmojiAt.set(client.sessionId, now);
             if (typeof msg?.emoji !== "string" || msg.emoji.length > 8)
                 return;
-            this.broadcast("emoji", { handle: p.handle, emoji: msg.emoji });
+            // H7 (auditor): identificar por sessionId (handles pueden duplicarse)
+            this.broadcast("emoji", { sessionId: client.sessionId, handle: p.handle, emoji: msg.emoji });
         });
         // Fase 2b: one-shot avatar photo upload at join. Capped at 60KB of dataURL
         // (client sends ~256px jpeg q0.82 ≈ 15-30KB) to keep the state payload sane.
@@ -311,7 +322,9 @@ export class WorldRoom extends Room {
             throw new ServerError(401, "invalid token");
         // Fase 6: handle baneado (persistente) → rechazo. El re-join con token
         // nuevo no evade el ban porque se banea por HANDLE, no por token.
-        if (this.bannedHandles.has(claims.handle)) {
+        // H3 (auditor): comparación en minúsculas — el ban "CaseVictim" no se
+        // evade re-entrando como "casevictim".
+        if (claims.handle && this.bannedHandles.has(claims.handle.toLowerCase())) {
             throw new ServerError(403, "banned");
         }
         // Fase 5b (criterio 5, auditor): role fuera del enum → rechazado.
@@ -353,6 +366,9 @@ export class WorldRoom extends Room {
                 c.send("kicked", { by: mod.handle, kind });
             }
             catch { /* */ }
+            // H4 (auditor): sacar del LiveKit TAMBIÉN — su token vive ~6h; sin esto
+            // el expulsado seguiría oyendo/hablando el evento.
+            void removeParticipantVoice(this.liveKitApiKey, this.liveKitApiSecret, this.liveKitHost, c.sessionId);
             try {
                 c.leave();
             }
@@ -366,7 +382,7 @@ export class WorldRoom extends Room {
             if (fs.existsSync(this.bansFile)) {
                 const raw = JSON.parse(fs.readFileSync(this.bansFile, "utf8"));
                 for (const [h, v] of Object.entries(raw || {})) {
-                    this.bannedHandles.set(h, v);
+                    this.bannedHandles.set(h.toLowerCase(), v);
                 }
             }
         }
@@ -375,8 +391,13 @@ export class WorldRoom extends Room {
         }
     }
     saveBans() {
+        // H3 (auditor): normalizar a minúsculas — el ban era evadible re-entrando
+        // con distinta capitalización ("CaseVictim" vs "casevictim").
+        const norm = {};
+        for (const [h, v] of this.bannedHandles)
+            norm[h.toLowerCase()] = v;
         try {
-            fs.writeFileSync(this.bansFile, JSON.stringify(Object.fromEntries(this.bannedHandles), null, 2));
+            fs.writeFileSync(this.bansFile, JSON.stringify(norm, null, 2));
         }
         catch (e) {
             console.warn("[bans] save failed:", e.message);

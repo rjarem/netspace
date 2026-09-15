@@ -97,12 +97,33 @@ async function main() {
   (admin2 as any).send("mod:ban", { handle: "Victim" });
   await sleep(1200);
   const bansOnDisk = JSON.parse(fs.readFileSync(bansPath, "utf8"));
-  check("M3a bans.json tiene a Victim", !!bansOnDisk["Victim"]);
+  // H3: el archivo guarda handles normalizados en minúsculas
+  check("M3a bans.json tiene a Victim (normalizado)", !!bansOnDisk["victim"]);
   let bannedJoin = false;
   try { await join(BASE, tgtTok2, "Victim"); bannedJoin = true; } catch { /* 403 esperado */ }
   check("M3b token NUEVO de baneado NO entra", !bannedJoin);
 
-  console.log(`---- modprobe: ${PASS} PASS / ${FAIL} FAIL ----`);
+  // H3 (auditor, repro 16-sep): ban "CaseVictim" → re-join "casevictim" NO entra
+  const cvTok = await mint("CaseVictim", "attendee");
+  try { await join(BASE, cvTok, "CaseVictim"); } catch { /* entra para ser baneado */ }
+  const adm = await join(BASE, adminTok, "ModAdmin");
+  await sleep(1000);
+  (adm as any).send("mod:ban", { handle: "CaseVictim" });
+  await sleep(1500);
+  const cvTok2 = await mint("casevictim", "attendee"); // MISMO handle en minúsculas
+  let cvJoined = false;
+  try { await join(BASE, cvTok2, "casevictim"); cvJoined = true; } catch { /* 403 esperado */ }
+  check("M3d ban NO evadible por capitalización", !cvJoined);
+  // cleanup del ban para re-runs
+  (adm as any).send("mod:ban", { handle: "casevictim", unban: true });
+  await sleep(600);
+
+  // H2 (auditor): mute REAL — se verifica en h2realprobe.ts (publicador de
+  // audio REAL de firefox; un cliente colyseus headless no publica tracks y
+  // el chequeo inline daba falso negativo). Aquí solo verificamos la banda
+  // de schema: mutedBy impuesto y micOn bloqueado (M1a/M1b arriba).
+
+  console.log(`---- modprobe: ${PASS} PASS / ${FAIL} FAIL (H2 real en h2realprobe.ts) ----`);
   process.exit(FAIL ? 1 : 0);
 }
 main().catch((e) => { console.error("probe error:", e?.message || e); process.exit(2); });

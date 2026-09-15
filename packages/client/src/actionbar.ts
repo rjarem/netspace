@@ -56,6 +56,15 @@ export function installActionBar(sc: SC) {
   micBtn.title = "Mic on/off";
   micBtn.textContent = "🎙️";
   micBtn.onclick = async () => {
+    // H2 (auditor): si tengo mute impuesto, NO puedo desmutearme — el server
+    // también rechaza el flag state, pero aquí bloqueamos la acción de raíz.
+    const me = sc.players.get(sc.myId);
+    if (!micOn && me?.mutedBy) {
+      const st = document.getElementById("status");
+      if (st) st.textContent = `🙊 Muteado por ${me.mutedBy} — pide a un moderador que te desmutee`;
+      sc.room?.send("state", { micOn: true }); // será rechazado; mantiene estado coherente
+      return;
+    }
     try {
       const room = sc.lkRoom;
       if (room?.localParticipant) {
@@ -102,14 +111,31 @@ export function installActionBar(sc: SC) {
   bar.appendChild(exit);
 
   // Mensajes remotos
-  sc.room?.onMessage("emoji", (msg: { handle: string; emoji: string }) => {
-    // localizar al emisor por handle → proyectar sobre su avatar
-    let sid = "";
-    for (const [id, p] of (sc as any).players as Map<string, any>) {
-      if ((p.handle || "").trim().toLowerCase() === (msg.handle || "").toLowerCase()) { sid = id; break; }
-    }
+  sc.room?.onMessage("emoji", (msg: any) => {
+    // H7 (auditor): el server identifica por sessionId (handles duplicables)
+    const sid = msg.sessionId || "";
     showFloatingEmoji(sc, msg.emoji, sid, msg.handle);
   });
+
+  // H2 (auditor): vigilar mi mutedBy — si me imponen mute mientras tengo el
+  // mic abierto, apagar la publicación REAL (el server ya silenció la pista
+  // vía Admin API; esto sincroniza mi UI y evita re-publicar).
+  const muteWatch = setInterval(() => {
+    try {
+      const me = sc.players?.get?.(sc.myId);
+      if (me?.mutedBy && micOn) {
+        micOn = false;
+        micBtn.textContent = "🔇";
+        micBtn.className = "gr-mic-off";
+        const lk = sc.lkRoom;
+        if (lk?.localParticipant) lk.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+        sc.room?.send("state", { micOn: false });
+        const st = document.getElementById("status");
+        if (st) st.textContent = `🙊 ${me.mutedBy} te silenció`;
+      }
+      if (!sc.room) clearInterval(muteWatch);
+    } catch { /* */ }
+  }, 500);
 }
 
 function showFloatingEmoji(sc: SC, glyph: string, sessionId: string, handle: string) {

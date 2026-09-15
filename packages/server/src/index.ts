@@ -12,7 +12,9 @@ const PORT = parseInt(process.env.PORT || "2567");
 const app = express();
 app.get("/api/health", (_req, res) => res.json({
   ok: true,
-  room: "netspace",
+  // Auditor 16-sep: alinear con la sala real (LIVEKIT_ROOM) — el valor
+  // hardcodeado "netspace" confundía la verificación de salas por entorno.
+  room: process.env.LIVEKIT_ROOM || "netspace-world",
   // Fase 5b (gate-auth): expone el modo auth para que el gate sepa qué esperar.
   // devAuth=true => dev-token sin JWT entra (solo con DEV_NO_AUTH=1).
   devAuth: process.env.DEV_NO_AUTH === "1",
