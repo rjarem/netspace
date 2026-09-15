@@ -81,7 +81,7 @@ class WorldScene extends Phaser.Scene {
   }
 
 
-  async connect(handle: string) {
+  async connect(handle: string, invite?: string | null) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     // Corrección 1 (auditor, 14-sep): el bypass ?probe= de headless gates fuerza
     // el server local — con puerto 4173 la detección por puerto caía al branch
@@ -108,7 +108,13 @@ class WorldScene extends Phaser.Scene {
     const client = new Client(server);
     try {
       plog("joinOrCreate...");
-      const room = (await client.joinOrCreate("world", { token: btoa(`dev:${handle}`) })) as Room<any>;
+      // Fase 5b (criterio 2, auditor): invitación JWT. Si la Antesala capturó
+      // un ?invite=<jwt> (link) o un código pegado, ese JWT ES el token de
+      // join (el server lo valida en onAuth). Sin invitación: dev-token
+      // (solo aceptado mientras DEV_NO_AUTH=1; cuando se apague, sin JWT no
+      // hay entrada).
+      const joinToken = invite || btoa(`dev:${handle}`);
+      const room = (await client.joinOrCreate("world", { token: joinToken })) as Room<any>;
       plog("joined roomId=" + room.id);
       // Fase 0 (auditoría 14-sep): v2b-guard DESHABILITADO. Los guards client-side
       // NUNCA hacen leave+rejoin — solo deshabilitan features. El handshake de
@@ -455,7 +461,7 @@ if (probeHandle) {
     try { document.title = "PL:" + s.slice(0, 60); } catch {}
   };
   (window as any).plog("bypass activado");
-  (window as any).__greenroom = { handle: probeHandle, avatarPhoto: null };
+  (window as any).__greenroom = { handle: probeHandle, avatarPhoto: null, invite: null };
   // BUG FOUND (gate C): las scenes de Phaser bootean ASYNC — en este punto
   // scene.scenes[0] es undefined y connect() nunca se llamaba (el join no
   // llegaba al server). En el flujo normal la Antesala tarda segundos y
@@ -464,7 +470,9 @@ if (probeHandle) {
     const s = (game.scene as any).scenes?.[0];
     if (s) {
       (window as any).plog("scene ready, calling connect");
-      s.connect(probeHandle);
+      // Fase 5b: probes también pueden entrar con ?invite=<jwt> (gate de
+      // entrada con auth real, criterio 5 del auditor).
+      s.connect(probeHandle, new URLSearchParams(location.search).get("invite"));
     } else {
       setTimeout(waitScene, 100);
     }
@@ -476,6 +484,7 @@ if (probeHandle) {
     // Expose for bubbles: photo dataURL becomes the remote-visible avatar image
     (window as any).__greenroom = res;
     const scene = game.scene.scenes[0] as WorldScene;
-    scene.connect(res.handle);
+    // Fase 5b (criterio 2): el JWT de invitación viaja al join
+    scene.connect(res.handle, res.invite);
   });
 }

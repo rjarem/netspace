@@ -9,6 +9,7 @@
 
 export type GreenRoomResult = {
   handle: string;
+  invite: string | null; // Fase 5b: JWT de invitación (?invite= o código pegado)
   avatarPhoto: string | null; // dataURL (jpeg) or null
   camDeviceId: string | null;
   micDeviceId: string | null;
@@ -42,6 +43,9 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
       </label>
       <input id="grHandle" placeholder="Tu handle" maxlength="20"
         style="padding:10px 16px;border-radius:8px;border:2px solid #ffb347;background:#1a1d27;color:#fff;font-size:16px;width:244px;text-align:center" />
+      <input id="grInvite" placeholder="Código de invitación (opcional)" maxlength="2000"
+        style="padding:8px 14px;border-radius:8px;border:1px solid #333;background:#1a1d27;color:#9aa4bf;font-size:12px;width:244px;text-align:center" />
+      <span id="grInviteInfo" style="font-size:12px;color:#6be38a;display:none">✅ Invitación detectada en el link</span>
       <div id="grHints" style="font-size:13px;text-align:center;line-height:1.5">
         <span id="grHintHandle" style="color:#ffb347">⚠️ Falta tu handle</span><br>
         <span id="grHintPhoto" style="color:#ffb347">⚠️ Falta tu foto de avatar</span>
@@ -59,6 +63,17 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
     const snapOk = document.getElementById("grSnapOk")!;
     const canvas = document.getElementById("grCanvas") as HTMLCanvasElement;
     const handleIn = document.getElementById("grHandle") as HTMLInputElement;
+    const inviteIn = document.getElementById("grInvite") as HTMLInputElement | null;
+    const inviteInfo = document.getElementById("grInviteInfo")!;
+    // Fase 5b (criterio 2): ?invite=<jwt> en el link pre-llena el código y
+    // muestra confirmación — flujo de invitado: abrir link → handle + foto → entrar.
+    const urlInvite = new URLSearchParams(location.search).get("invite");
+    if (urlInvite && inviteIn) {
+      inviteIn.value = urlInvite;
+      inviteInfo.style.display = "inline";
+      // limpiar la URL para que el JWT no quede en el historial ni en shares
+      try { history.replaceState(null, "", location.pathname); } catch {}
+    }
     const hintHandle = document.getElementById("grHintHandle")!;
     const hintPhoto = document.getElementById("grHintPhoto")!;
     const ambient = document.getElementById("grAmbient") as HTMLInputElement;
@@ -191,6 +206,7 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
       join.style.display = "none";
       resolve({
         handle,
+        invite: inviteIn?.value.trim() || null,
         avatarPhoto: photo,
         camDeviceId: camSel.value || null,
         micDeviceId: micSel.value || null,
