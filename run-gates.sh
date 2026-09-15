@@ -15,6 +15,9 @@ PASS=0; FAIL=0
 ok(){ echo "GATE $1: PASS — $2"; PASS=$((PASS+1)); }
 bad(){ echo "GATE $1: FAIL — $2"; FAIL=$((FAIL+1)); }
 
+# sanity: dist fresco (Fase 5a-a: la disciplina ya falló una vez — automatizado)
+./scripts/check-dist-fresh.sh || { echo "DIST STALE — recompila antes de correr gates"; exit 2; }
+
 # sanity: server vivo
 curl -s "http://localhost:2567/api/health" | grep -q '"ok":true' || { echo "SERVER LOCAL (:2567) NO VIVO — levántalo primero"; exit 2; }
 # sanity: static server vivo
@@ -33,10 +36,14 @@ echo "$OUT"
 echo "$OUT" | grep -q 'AVATAR-PROBE-PASS' && ok B "ack+socket vivo+late-joiner+garbage rejected" || bad B "probe falló"
 
 echo "== GATE C: firefox headless 2 páginas × 5 rounds =="
+rm -rf /tmp/gr-ff-gateC* 2>/dev/null   # perfiles viejos confunden al singleton
 for r in 1 2 3 4 5; do
-  npx tsx packages/server/scripts/headless-gateC.ts "$r" 10 >/dev/null 2>&1
+  # stagger 2s entre rounds además del stagger interno del runner
+  sleep 2
+  npx tsx packages/server/scripts/headless-gateC.ts "$r" 14 >/dev/null 2>&1
   echo "round $r ejecutado"
 done
+sleep 3
 sleep 2
 C_FAILS=0
 declare -A ROUND_ROOM

@@ -24,10 +24,13 @@ function launchFF(handle: string, profile: string, secs: number) {
 async function main() {
   const round = process.argv[2] || "1";
   const secs = parseInt(process.argv[3] || "10");
-  await Promise.all([
-    launchFF(`gate${round}A`, `${PROFILE_BASE}-r${round}a-${Date.now()}`, secs),
-    launchFF(`gate${round}B`, `${PROFILE_BASE}-r${round}b-${Date.now()}`, secs),
-  ]);
+  // stagger 2s entre los DOS firefox del mismo round (hallazgo gateC-prod.sh:
+  // firefox singleton — sin pausa el 2º pierde la carrera y no abre página).
+  // secs=14 (antes 10): deja margen extra al arranque de firefox en VM.
+  const a = launchFF(`gate${round}A`, `${PROFILE_BASE}-r${round}a-${Date.now()}`, Math.max(secs, 14));
+  await new Promise((r) => setTimeout(r, 2000));
+  const b = launchFF(`gate${round}B`, `${PROFILE_BASE}-r${round}b-${Date.now()}`, secs);
+  await Promise.all([a, b]);
   console.log(`round ${round} done`);
   process.exit(0);
 }

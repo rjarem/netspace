@@ -5,7 +5,6 @@ const { Server, Room, ServerError } = colyseus;
 import { Schema, MapSchema, type } from "@colyseus/schema";
 import {
   validateMove, inZone, canEnter,
-  AUDIO_RADIUS, AUDIO_MAX_RADIUS, VIDEO_GROUP_MAX,
   type WorldMap, type UserRole, type Position,
 } from "@netspace/shared";
 import { defaultMap } from "./world.js";

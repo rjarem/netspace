@@ -209,33 +209,48 @@ megáfono, broadcast, áreas y cola; (4) lo caro (recording) al final.
 - Riesgo ejecutado: **bajo** (rollback nunca necesario; sigue disponible).
 
 ### Fase 5 — Hardening de escala y seguridad (ANTES de features nuevas)
-**5a. Escala (riesgo: medio-bajo)**
-- Objetivo: eliminar los cuellos H3, H4, H5, H6 + los nuevos H13, H14.
-- Cambios: borrar `broadcastProximity` del server (el cliente ya calcula todo
-  local); UN AudioContext compartido en `voice.ts`; cap anti-teleport en `move`;
-  spawn con wrap; **raíz del techo uWS (H13):** configurar el maxPayload real
-  de uWS o fijar el techo documentado + bajar el objetivo de compresión de
-  foto a ≤4KB (margen); **bloqueo duro por versión (H14):** overlay
-  "Actualiza la página" cuando el build del cliente ≠ `serverBuild`;
-  **chequeo automatizado de dist fresco** (pre-push o en run-gates.sh: fallar
-  si `packages/server/dist` es más viejo que `src` — la lección 1 del día no
-  puede depender de disciplina).
-- Dependencias: ninguna.
-- Criterios de aceptación medibles:
-  - Gate de carga nuevo: N bots headless (N≥20) en la sala, egress del server
-    medido (bytes/s) ≤ 20% del egress actual a igual N.
-  - Con 12 bots cercanos publicando audio, el cliente mantiene UN AudioContext
-    y todas las voces suenan (probe con niveles de gain > 0).
-  - Probe: `move` con salto de 50 tiles → rechazado; drag sigue igual.
-  - Probe: mensaje WS de 8KB → o bien pasa (uWS configurado) o bien el techo
-    documentado se valida; foto comprimida siempre ≤4KB.
-  - Cliente con build viejo contra server nuevo → overlay de recarga (no
-    sesión degradada).
-  - Gate C contra PROD ejecutado (cierra el pendiente formal de Fase 4).
-- Riesgo: **medio-bajo** (toca audio, que es lo más delicado; mitigación: gates
-  de voz existentes + prueba de Tito).
+**5a. Escala — PARTES 1+2 VALIDADAS (15-sep madrugada, HEAD `2c5673c`)**
 
-**5b. Seguridad/auth (riesgo: medio)**
+Completado y verificado por el auditor contra código y prod:
+- H13 CERRADO POR MEDICIÓN: el techo ~4.5KB era del server VIEJO (uWS); el
+  transporte actual (@colyseus/ws-transport, lib ws) respeta maxPayload 1MB.
+  Probe permanente `payloadprobe.ts` en la suite: 58KB ACKED, 1MB vivo
+  (rechazado por la validación de 60KB, correcto), 1.1MB DEAD (techo real).
+  Corrección de creencia documentada: el 1009 lo eliminó la recompilación
+  `658f69a` sin que lo supiéramos.
+- H14 v4 ACEPTADO: detector por cambio de `serverBuild` en localStorage →
+  auto-reload UNA vez; overlay manual reservado. Lección de diseño válida:
+  el SHA embebido nunca cuadra con el BUILD_SHA del compose (build antes del
+  commit/amend) — la señal correcta es "cambió desde la última visita de ESTE
+  navegador". Pulido pendiente (no bloqueante): evitar el auto-reload si el
+  usuario está a mitad de la Antesala (perdería la foto).
+- broadcastProximity ELIMINADO (verificado: `sc.proximity` no tenía lector en
+  el cliente; suscripciones se reevalúan localmente cada 500ms).
+- AudioContext compartido (`getSharedAudioCtx`, voice.ts) — verificado en
+  código: un solo contexto para toda la cadena.
+- Cap anti-teleport también en `move` (worldRoom.ts:102) — verificado.
+- Spawn con wrap por filas (x=4+n%12, y=4+4·floor(n/12)) — verificado.
+- `check-dist-fresh.sh` creado y ya detectó 2 builds stale reales; fix de
+  tooling (comparar contra archivo, no mtime del directorio).
+- GATE C-PROD (`scripts/gateC-prod.sh`, re-ejecutable): PASS 5/5 — el
+  pendiente formal de Fase 4 queda CERRADO. Hallazgo documentado: los 2
+  Firefox requieren 2s de stagger (singleton).
+
+**Resto de 5a (rápido, ANTES de 5b):**
+1. Enganchar `check-dist-fresh.sh` a `run-gates.sh` (sanity) Y a un hook
+   pre-push — la corrección de fondo de la lección 1 no se cierra sin esto.
+2. Borrar restos de radio/proximidad muertos en `shared` (curva lineal vieja,
+   H9) — con el broadcast eliminado, la curva duplicada ya no tiene razón.
+3. PHOTO_BUDGET: subir de 4000 a **16000** (16KB). El techo real es 1MB y la
+   validación server es 60KB; 16KB da calidad visiblemente mejor con margen
+   amplio, y acota el burst de late-join (50 fotos ≈ 800KB, aceptable en
+   móvil). La compresión iterativa se queda como mecanismo de seguridad.
+4. Prueba de carga con N clientes sintéticos: DIFERIDA con disparadores
+   explícitos — obligatoria antes de (a) cualquier evento que espere >50
+   personas, o (b) subir `maxClients` de 150. Mientras ambas cosas no
+   ocurran, el techo honesto sigue siendo el de la sección 4.
+
+**5b. Seguridad/auth (riesgo: medio)** — SIGUIENTE BLOQUE tras el resto de 5a.
 - Objetivo: cerrar H1 y H2.
 - Cambios: cliente aprende a pedir token real (flujo: link con `?invite=<jwt>` o
   campo "código de evento" en la Antesala → `/api/invite`); rotar JWT_SECRET y
@@ -523,3 +538,14 @@ propio). **No inventar SSO propio contra HeySummit: no lo ofrecen.**
   automatizado de dist fresco + Gate C prod pendiente. Decisiones de Tito
   registradas: sin DMs, hardening antes que UI, zonas JSON→editor híbrido,
   auth dev hasta 5b. Siguiente bloque autorizado: Fase 5a+5b.
+- v4 (15-sep-2026, madrugada): Fase 5a partes 1+2 VALIDADAS contra código y
+  prod (HEAD 2c5673c). H13 cerrado por medición (el techo 4.5KB era del
+  server viejo; probe permanente payloadprobe.ts: 58KB OK / 1MB vivo / 1.1MB
+  DEAD). H14 v4 aceptado (auto-reload una vez por cambio de serverBuild en
+  localStorage; pulido pendiente: no recargar a mitad de la Antesala).
+  broadcastProximity eliminado, AudioContext compartido, cap en move, spawn
+  con wrap — todos verificados en código. GATE C-PROD PASS 5/5: pendiente
+  formal de Fase 4 CERRADO. Decisiones: PHOTO_BUDGET sube a 16KB (techo real
+  1MB, validación server 60KB); prueba de carga diferida con disparadores
+  (>50 personas o subir maxClients); resto de 5a (enganchar check-dist-fresh
+  a run-gates + pre-push, limpiar restos de radio en shared) ANTES de 5b.

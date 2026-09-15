@@ -1,8 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
-  proximityVolume, tileDist, inZone, canEnter, validateMove, computeProximity,
-  AUDIO_RADIUS, AUDIO_MAX_RADIUS, VIDEO_GROUP_MAX,
-  type WorldMap, type Zone,
+  inZone, canEnter, validateMove,
+  type WorldMap,
 } from "./index";
 
 const map: WorldMap = {
@@ -13,20 +12,9 @@ const map: WorldMap = {
   ],
 };
 
-describe("proximityVolume", () => {
-  it("full volume inside AUDIO_RADIUS", () => {
-    expect(proximityVolume(0)).toBe(1.0);
-    expect(proximityVolume(AUDIO_RADIUS)).toBe(1.0);
-  });
-  it("zero beyond max", () => {
-    expect(proximityVolume(AUDIO_MAX_RADIUS)).toBe(0.0);
-    expect(proximityVolume(20)).toBe(0.0);
-  });
-  it("linear falloff between", () => {
-    expect(proximityVolume(AUDIO_RADIUS + 1)).toBeCloseTo(0.67, 1);
-    expect(proximityVolume(AUDIO_MAX_RADIUS - 1)).toBeCloseTo(0.33, 1);
-  });
-});
+// Nota (Fase 5a, auditor): proximityVolume, tileDist y computeProximity se
+// ELIMINARON de shared — la reevaluación de proximidad vive en el cliente
+// desde que broadcastProximity (O(N²) en el server) fue eliminado.
 
 describe("zones", () => {
   it("inZone detection", () => {
@@ -53,19 +41,5 @@ describe("validateMove", () => {
   });
   it("clamps to bounds", () => {
     expect(validateMove({ x: 0, y: 0 }, { x: -5, y: 100 }, map, "admin")).toEqual({ x: 0, y: 29 });
-  });
-});
-
-describe("computeProximity", () => {
-  it("close players hear each other, far ones don't", () => {
-    const players = new Map([
-      ["a", { x: 10, y: 10 }],
-      ["b", { x: 12, y: 10 }],
-      ["far", { x: 30, y: 30 }],
-    ]);
-    const prox = computeProximity(players);
-    expect(prox.get("a")!.has("b")).toBe(true);
-    expect(prox.get("a")!.has("far")).toBe(false);
-    expect(prox.get("b")!.get("a")).toBe(1.0);
   });
 });
