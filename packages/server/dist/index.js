@@ -8,7 +8,13 @@ import { WorldRoom } from "./worldRoom.js";
 import { inviteRouter } from "./invite.js";
 const PORT = parseInt(process.env.PORT || "2567");
 const app = express();
-app.get("/api/health", (_req, res) => res.json({ ok: true, room: "netspace" }));
+app.get("/api/health", (_req, res) => res.json({
+    ok: true,
+    room: "netspace",
+    // Fase 5b (gate-auth): expone el modo auth para que el gate sepa qué esperar.
+    // devAuth=true => dev-token sin JWT entra (solo con DEV_NO_AUTH=1).
+    devAuth: process.env.DEV_NO_AUTH === "1",
+}));
 // Fase 3 debugging (auditor-prescrito): los clientes headless ?probe= reportan
 // cada paso de connect() aquí; el log cae a stdout del server (gr-server.log).
 app.get("/api/probelog", (req, res) => {

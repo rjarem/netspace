@@ -213,6 +213,14 @@ export class WorldRoom extends Room {
         const claims = await verifyToken(options.token);
         if (!claims)
             throw new ServerError(401, "invalid token");
+        // Fase 5b (criterio 5, auditor): role fuera del enum → rechazado.
+        // El JWT está firmado por nosotros, pero defensa en profundidad: ni un
+        // token válido introduce un role fuera del enum (p.ej. JWT minteado
+        // antes de un cambio de enum, o bug del emisor).
+        const VALID_ROLES = ["admin", "speaker", "attendee", "panelist", "dj"];
+        if (!VALID_ROLES.includes(claims.role)) {
+            throw new ServerError(401, "invalid role");
+        }
         return claims;
     }
     onJoin(client, _options, auth) {

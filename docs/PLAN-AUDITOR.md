@@ -192,6 +192,16 @@ Severidad: 🔴 crítico · 🟠 alto · 🟡 medio · ⚪ bajo.
   dedo; (b) ventana acumulativa server-side (distancia/tiempo) en vez de cap
   por paquete; (c) al iniciar drag, cancelar/completar el tween de resync y
   re-baseline. Backlog diferido por Tito.
+- **H17 🟠 — Sala LiveKit compartida entre entornos y pruebas.** `livekit.ts`
+  tiene el room grant FIJADO a `"netspace-world"` (verificado en código): el
+  server local, los probes y prod mintean tokens para LA MISMA sala. El
+  15-sep una sesión real de prod convivió con probes locales — contaminación
+  de pruebas y riesgo de privacidad (un probe podía oír la voz de un usuario
+  real). Fix en 5b (criterios 8 y 9): nombre de sala por env
+  (`LIVEKIT_ROOM`, prod=netspace-world, local=netspace-dev) + los probes NO
+  conectan a LiveKit o lo hacen con canSubscribe:false. A futuro (Fase 9/11)
+  la sala se deriva del evento (`event:<slug>`) — ya contemplado en "Lo que
+  se nos pasó" #1.
 
 ---
 
@@ -269,7 +279,25 @@ es soft-collision (empuje suave) en una fase UI futura; NO es deuda de 5b.
 visible, bajo el panel de usuarios en línea o en la toolbar; saca de la
 sesión limpiamente. Micro-tarea que puede viajar con la Fase 6 o 7.
 
-### Fase 5c — HOTFIX P0: audio conversacional (el que habla NO debe callar a todos)
+### Fase 5c — HOTFIX P0: audio conversacional — ✅ CERRADA (15-sep, HEAD `e060a15`)
+
+**Causa raíz (documentada por el implementador, reproducida sin dispositivos):**
+`onRemoteAudio` corría 2 veces por el mismo track — vía `TrackSubscribed`
+durante el `await room.connect()` Y vía el loop "already-subscribed" del
+rejoin. La 2ª llamada recreaba la cadena WebAudio completa sobre el mismo
+MediaStream; en Chrome la 2ª fuente sobre un MediaStream ya consumido queda
+SILENCIOSA, y `p.audioNode` apuntaba a la cadena muda. Intermitente según el
+timing del join — exactamente el síntoma de Tito. S1 y S2 descartados por
+medición (todos publican, cero unsubscribes, distancias dentro de radio).
+**Fix:** idempotencia — si `p.audioNode` ya existe, no recrear (dbg
+`audio-remote-skip`). Verificado en código por el auditor (voice.ts:106-107).
+
+**Validación del auditor (15-sep):** HEAD `e060a15` limpio y pusheado; prod ==
+dist (`index-Dd_mccJg.js`); health OK; fix idempotente presente; probe
+permanente `voiceprobe3.ts` + instrumentación `voicetest.ts` (solo con
+`?voicetest=1`) existen; gate RMS PASS documentado (6/6 cadenas con señal, 3
+skips de duplicado); Tito confirmó con 3 dispositivos en cuartos separados:
+hablan simultáneos y se oyen. FASE 5c CERRADA.
 
 **Reporte de Tito (15-sep):** cuando un usuario habla, los demás no pueden
 interrumpir — si A dice "1,2,3,4" y B se acerca y dice "hola", NI A NI NADIE
@@ -341,11 +369,11 @@ capas de abajo — a discriminar con reproducción.
 3. ¿El segundo hablante APARECÍA como conectado a voz en el status de los
    demás (🎙️ N en voz) y estaban cerca EN EL MAPA (≤8 tiles)?
 
-**5b. Seguridad/auth (riesgo: medio)** — AUTORIZADA (15-sep). Orden actualizado:
-(0) gate pre-push de bundle trackeado → (1) FASE 5c (hotfix audio P0) →
-(2) 5b. La 5b no se toca hasta que la conversación multi-hablante esté
-verificada — el audio roto es más urgente que la auth para un producto cuya
-mecánica central ES hablar.
+**5b. Seguridad/auth (riesgo: medio)** — AUTORIZADA (15-sep, re-autorizada tras
+cierre de 5c). Orden: (0) gate pre-push de bundle trackeado (APROBADO y aún
+PENDIENTE — el hook actual solo cubre STALE) → (1) auth real → (2) rotación →
+(3) LiveKit fuera de --dev + separación de salas por entorno → (4)
+DEV_NO_AUTH=0 al final con gate de entrada verde en prod.
 - Objetivo: cerrar H1 y H2.
 - Orden obligatorio: (1) auth real → (2) rotación de secretos → (3) LiveKit
   fuera de `--dev` → (4) `DEV_NO_AUTH=0` AL FINAL, solo con el gate de entrada
@@ -378,6 +406,14 @@ mecánica central ES hablar.
      desde 2 dispositivos con link de invitado al final.
   7. Rollback documentado ANTES de cada compose.update (procedimiento
      estándar: guardar copia real del compose, pin anterior).
+  8. **Separación de salas LiveKit por entorno (H17):** el nombre de sala
+     viene de env (`LIVEKIT_ROOM`; prod=netspace-world, local=netspace-dev).
+     Probe: un cliente contra el server LOCAL aterriza en netspace-dev y NO
+     ve/oye a nadie de prod; Admin API confirma 2 salas distintas.
+  9. **Aislamiento de probes:** el flujo `?probe=` NO conecta a LiveKit (o
+     conecta con canSubscribe:false y jamás suscribe audio). Verificación:
+     Admin API muestra que un probe nunca aparece como suscriptor de tracks
+     ajenos; los gates de convergencia siguen PASS (no necesitan audio).
 - Riesgo: **medio** (si sale mal, nadie entra — por eso el gate de entrada se
   construye y pasa contra LOCAL primero, luego contra prod con DEV_NO_AUTH=***
   todavía en 1, y solo al final se apaga).
@@ -687,3 +723,13 @@ propio). **No inventar SSO propio contra HeySummit: no lo ofrecen.**
   audibles. Orden actualizado: gate bundle-trackeado → 5c → 5b. El audio
   multi-hablante NUNCA se había validado (prueba del fade diferida desde
   13-sep) — el bug puede ser anterior a 5a.
+- v7 (15-sep-2026): FASE 5c CERRADA — causa raíz real (doble ejecución de
+  onRemoteAudio: 2ª MediaStreamSource sobre el mismo stream queda muda en
+  Chrome; intermitente por timing de join), fix idempotente verificado en
+  código (voice.ts:106-107), probe permanente voiceprobe3 + voicetest, gate
+  RMS 6/6 PASS, confirmado por Tito con 3 dispositivos en cuartos separados.
+  Nuevo hallazgo H17: sala LiveKit hardcodeada "netspace-world" compartida
+  entre local/probes/prod (sesión real convivió con probes — privacidad).
+  5b RE-AUTORIZADA con 9 criterios (agregados: 8 separación de salas por env
+  LIVEKIT_ROOM, 9 probes nunca suscriben audio). Gate pre-push de bundle
+  trackeado: APROBADO, sigue pendiente — es el paso 0 de 5b.
