@@ -17,8 +17,9 @@ const EMOJIS: Array<[string, string]> = [
 const CSS = `
 @keyframes grEmojiFloat {
   0%   { transform: translate(-50%, 0) scale(0.6); opacity: 0; }
-  15%  { transform: translate(-50%, -14px) scale(1.35); opacity: 1; }
-  100% { transform: translate(-50%, -90px) scale(1); opacity: 0; }
+  10%  { transform: translate(-50%, -20px) scale(1.35); opacity: 1; }
+  80%  { opacity: 1; }
+  100% { transform: translate(-50%, -60vh) scale(1); opacity: 0; }
 }
 #gr-actionbar { position: fixed; left: 50%; transform: translateX(-50%);
   bottom: calc(8px + env(safe-area-inset-bottom, 0px)); z-index: 80;
@@ -156,9 +157,9 @@ function showFloatingEmoji(sc: SC, glyph: string, sessionId: string, handle: str
   const el = document.createElement("div");
   el.textContent = glyph;
   el.style.cssText = `position:absolute;left:${x}px;top:${y}px;font-size:30px;` +
-    "pointer-events:none;transform:translate(-50%,0);animation:grEmojiFloat 2.2s ease-out forwards;" +
+    "pointer-events:none;transform:translate(-50%,0);animation:grEmojiFloat 3s ease-out forwards;" +
     "text-shadow:0 2px 6px #000a;";
   el.title = handle;
   layer.appendChild(el);
-  setTimeout(() => el.remove(), 2400);
+  setTimeout(() => el.remove(), 3200);
 }

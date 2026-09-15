@@ -280,10 +280,27 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
         scene: this,
         dbg: [] as string[],
       };
-    } catch (e) {
+    } catch (e: any) {
       const st = document.getElementById("status");
-      if (st) st.textContent = "❌ Error de conexión: " + (e as Error).message;
+      const msg = String(e?.message || e);
+      if (st) st.textContent = "❌ Error de conexión: " + msg;
       console.error("join failed:", e);
+      // Fix (Tito, 16-sep): sin invitación válida el usuario quedaba en blanco
+      // ("entra y no aparece nada") — 401/403 invalid token era INVISIBLE.
+      // Devolver a la Antesala con un mensaje claro y accionable (siempre —
+      // el usuario puede reintentar con otro código sin recargar).
+      const join = document.getElementById("join");
+      if (join) {
+        join.style.display = "flex";
+        const status2 = document.getElementById("grStatus");
+        if (status2) {
+          const denied = /40[13]|invalid|expired|unauthorized/i.test(msg);
+          status2.textContent = denied
+            ? "⛔ Link de invitación inválido o expirado — pide uno nuevo al organizador y vuelve a entrar."
+            : "❌ No se pudo conectar: " + msg;
+          status2.style.color = denied ? "#ff8a80" : "#ffb347";
+        }
+      }
     }
   }
 
