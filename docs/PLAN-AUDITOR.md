@@ -666,6 +666,33 @@ propio). **No inventar SSO propio contra HeySummit: no lo ofrecen.**
   el schema sincronizado; archivos de 250–400 líneas; español mexicano en todo
   artefacto; deploy solo vía compose.update+deploy.
 
+## 7. Plan integrado post-ideaario (v8, 16-sep-2026)
+
+El ideaario del producto final (`~/projects/grooveradius/grooveradius-ideaario-producto-2026-09-15.md`,
+33 ítems) quedó integrado al plan. Veredicto ítem por ítem, correcciones con
+evidencia y disputas: `~/projects/grooveradius/auditor-respuesta-2026-09-16-ideaario-y-plan.md`.
+
+Correcciones de hecho clave: (1) el ítem 27 (foto avatar) NO está bloqueado —
+H13 se cerró el 15-sep (PHOTO_BUDGET=16000 en `greenroom.ts:168`, techo real
+medido 1.1MB, `payloadprobe.ts` permanente); (2) pinch-zoom (ítem 31) ya está
+hecho (Fase 4); (3) suscripción por distancia + dynacast (ítem 26) ya existen
+(`voice.ts:184-195`, `voice.ts:30`).
+
+Nuevo orden de fases (sustituye el orden de las viejas 6-12; el plan operativo
+de 5b NO cambia): **6** roles+moderación (sin cambios) → **7** pulido+robustez
+(toolbar shell con mute/emojis+frases/Salir, fade halos, halo hablando vía
+audioLevel, halo por rol, reconexión Colyseus, diagnóstico Brave/Safari,
+/api/metrics) → **8** evento (megáfono, Stage multi-speaker, broadcast, "pedir
+la palabra" — fusión viejas 8+10 —, compartir pantalla, modo grid) → **9**
+espacios y accesos (sala por evento, mapa como data, espacios privados, embeds,
+panel de reglas del organizador, tabla de invitaciones + cuota default 3, foto
+de grupo) → **10** networking (perfil opt-in, tarjeta de contacto,
+quick-reference; badge solo en modo evento tras prototipo) → **11** registro
+3 niveles + HeySummit → **12** grabación egress (al final). Anti-feedback: solo
+detector de saturación (80%), post-12. Subir archivos: NO autorizado (disputa 1
+para Tito). Escalabilidad: load test por disparador (>50 personas), no bloquea
+fases (disputa 2 para Tito).
+
 ## Registro de cambios
 
 - v1 (14-sep-2026): primera versión. Fase 4 autorizada con 6 condiciones
@@ -733,3 +760,11 @@ propio). **No inventar SSO propio contra HeySummit: no lo ofrecen.**
   5b RE-AUTORIZADA con 9 criterios (agregados: 8 separación de salas por env
   LIVEKIT_ROOM, 9 probes nunca suscriben audio). Gate pre-push de bundle
   trackeado: APROBADO, sigue pendiente — es el paso 0 de 5b.
+- v8 (16-sep-2026): ideaario del producto (33 ítems) integrado al plan — nueva
+  sección 7 con el orden de fases 6-12 re-planificado. Correcciones de hecho:
+  ítem 27 (foto avatar) desbloqueado desde el 15-sep (PHOTO_BUDGET=16000),
+  pinch-zoom ya hecho, suscripción por distancia ya existe. NO autorizado:
+  subir archivos (disputa 1 para Tito). Anti-feedback reducido a detector de
+  saturación. Networking recibe fase propia (10) entre espacios y HeySummit.
+  Respuesta completa: `~/projects/grooveradius/auditor-respuesta-2026-09-16-ideaario-y-plan.md`.
+  Sin autorizaciones nuevas — el plan operativo de 5b sigue vigente.
