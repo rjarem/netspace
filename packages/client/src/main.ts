@@ -195,6 +195,41 @@ class WorldScene extends Phaser.Scene {
         this.joinVoice(msg);
       });
 
+      // Fase 6: moderación — avisos y expulsión
+      room.onMessage("mod-notice", (msg: any) => {
+        const st = document.getElementById("status");
+        const label: Record<string, string> = {
+          mute: `🙊 ${msg.target} muteado por ${msg.by}`,
+          unban: `✅ ${msg.target} desbaneado`,
+          ban: `⛔ ${msg.target} baneado por ${msg.by}`,
+          kick: `👢 ${msg.target} expulsado por ${msg.by}`,
+          "mute-blocked": `🙊 Tu mic está muteado por ${msg.by} — no puedes desmutearlo`,
+        };
+        if (st) st.textContent = label[msg.type] || `mod:${msg.type}`;
+        console.log("[mod]", msg.type, msg.target || "", msg.by || "");
+        // el estado de la sala ya sincronizó mutedBy — refrescar píldoras
+        try { this.renderUserList(); } catch { /* */ }
+      });
+
+      room.onMessage("kicked", (msg: any) => {
+        console.warn("[mod] kicked:", msg?.kind, "by", msg?.by);
+        // Volver a la Antesala con aviso — sin auto-reconnect (el token está
+        // invalidado server-side; re-entrar con el mismo link daría 403).
+        try { this.room?.leave(true); } catch { /* */ }
+        const ov = document.createElement("div");
+        ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:rgba(15,17,23,.97);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:#e6e6e6;font-family:system-ui,sans-serif;text-align:center;padding:24px;";
+        const h = document.createElement("div");
+        h.textContent = msg?.kind === "ban" ? "⛔ Fuiste baneado del evento" : "👢 Fuiste expulsado";
+        h.style.cssText = "font-size:22px;font-weight:600;";
+        const p2 = document.createElement("div");
+        p2.textContent = msg?.kind === "ban"
+          ? "El organizador te bloqueó permanentemente."
+          : `Expulsado por ${msg?.by || "un moderador"}. Pide un nuevo link para volver.`;
+        p2.style.cssText = "font-size:14px;color:#9aa;max-width:320px;";
+        ov.append(h, p2);
+        document.body.appendChild(ov);
+      });
+
       // Minimap: corner canvas with dots (self highlighted). Scaled to map.
     const mm = document.createElement("canvas");
     mm.id = "minimap";

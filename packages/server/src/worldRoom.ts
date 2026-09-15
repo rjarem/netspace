@@ -4,11 +4,13 @@ import type { Client } from "colyseus";
 const { Server, Room, ServerError } = colyseus;
 import { Schema, MapSchema, type } from "@colyseus/schema";
 import {
-  validateMove, inZone, canEnter,
+  validateMove, inZone, canEnter, isModerationRole,
   type WorldMap, type UserRole, type Position,
 } from "@netspace/shared";
 import { defaultMap } from "./world.js";
 import { mintLiveKitToken } from "./livekit.js";
+import fs from "node:fs";
+import path from "node:path";
 
 // Drag & drop: max tiles per throttled drag update (anti-teleport guard).
 // Client sends at most 10 updates/s while dragging — 8 tiles covers fast flicks.
@@ -25,6 +27,10 @@ class PlayerState extends Schema {
   @type("boolean") micOn = false;
   @type("boolean") camOn = false;
   @type("boolean") inStage = false;
+  // Fase 6: moderación — identity del moderador que impuso el mute ("" = libre).
+  // El server rechaza state micOn:true mientras esté activo (no reversible
+  // desde el cliente).
+  @type("string") mutedBy = "";
 }
 
 class WorldState extends Schema {
@@ -66,6 +72,14 @@ function atobUrl(s: string): string {
   return atob(s.replace(/-/g, "+").replace(/_/g, "/"));
 }
 
+// Fase 6: hash corto del token para invalidar re-joins de expulsados sin
+// almacenar el JWT completo (djb2 hex — determinista, suficiente como key).
+function hashToken(token: string): string {
+  let h = 5381;
+  for (let i = 0; i < token.length; i++) h = ((h << 5) + h + token.charCodeAt(i)) >>> 0;
+  return h.toString(16);
+}
+
 export class WorldRoom extends Room<WorldState> {
   maxClients = 150;
   map: WorldMap = defaultMap;
@@ -74,6 +88,13 @@ export class WorldRoom extends Room<WorldState> {
   liveKitApiSecret: string = "";
   // Fase 1.3: avatar photos fuera del schema — memoria server-side, sessionId → dataURL
   avatarPhotos = new Map<string, string>();
+  // Fase 6: moderación
+  // - tokenHash → for SET en kickedTokens; el re-join con ese MISMO token es rechazado
+  // - bannedHandles sobrevive restarts (archivo JSON); kicks viven en memoria
+  bannedHandles = new Map<string, { by: string; ts: number }>();
+  kickedTokens = new Set<string>();
+  tokenHashBySession = new Map<string, string>();
+  bansFile = path.resolve(process.env.BANS_FILE || "bans.json");
 
   onCreate(options: any) {
     this.setState(new WorldState());
@@ -84,6 +105,8 @@ export class WorldRoom extends Room<WorldState> {
     this.liveKitHost = process.env.LIVEKIT_HOST || "";
     this.liveKitApiKey = process.env.LIVEKIT_API_KEY || "";
     this.liveKitApiSecret = process.env.LIVEKIT_API_SECRET || "";
+    // Fase 6: cargar baneos persistentes (sobreviven restarts)
+    this.loadBans();
 
     // Proximity broadcast tick — 5 times/sec
     // Fase 5a (escala): broadcast "proximity" ELIMINADO — el cliente reevalúa
@@ -123,8 +146,57 @@ export class WorldRoom extends Room<WorldState> {
     this.onMessage("state", (client, msg: StateMsg) => {
       const player = this.state.players.get(client.sessionId);
       if (!player) return;
-      if (typeof msg.micOn === "boolean") player.micOn = msg.micOn;
+      // Fase 6: mute impuesto NO reversible desde el cliente — el server
+      // rechaza silenciosamente micOn:true mientras mutedBy esté activo.
+      if (typeof msg.micOn === "boolean") {
+        if (msg.micOn && player.mutedBy) {
+          client.send("mod-notice", { type: "mute-blocked", by: player.mutedBy });
+          return;
+        }
+        player.micOn = msg.micOn;
+      }
       if (typeof msg.camOn === "boolean") player.camOn = msg.camOn;
+    });
+
+    // --- Fase 6: comandos de moderación (server-side, rol verificado del JWT
+    // de sesión — client.auth ya fue validado en onAuth, el cliente NO manda
+    // su rol, no hay forma de fingirlo) ---
+    this.onMessage("mod:mute", (client, msg: { handle: string; on: boolean }) => {
+      const mod = this.state.players.get(client.sessionId);
+      if (!mod || !isModerationRole(mod.role as UserRole)) return;
+      const target = this.findByHandle(String(msg?.handle || ""));
+      if (!target || target.handle === mod.handle) return;
+      target.mutedBy = msg.on ? mod.handle : "";
+      if (msg.on) target.micOn = false;
+      this.broadcast("mod-notice", {
+        type: "mute", target: target.handle, by: mod.handle, on: !!msg.on,
+      });
+      this.logMod(client, "mute", target.handle, String(msg?.on));
+    });
+
+    this.onMessage("mod:kick", (client, msg: { handle: string }) => {
+      const mod = this.state.players.get(client.sessionId);
+      if (!mod || !isModerationRole(mod.role as UserRole)) return;
+      this.kickByHandle(client, mod, String(msg?.handle || ""), "kick");
+    });
+
+    this.onMessage("mod:ban", (client, msg: { handle: string; unban?: boolean }) => {
+      const mod = this.state.players.get(client.sessionId);
+      if (!mod || mod.role !== "admin") return; // ban/unban: SOLO admin
+      if (msg?.unban) {
+        this.bannedHandles.delete(String(msg.handle || ""));
+        this.saveBans();
+        this.broadcast("mod-notice", { type: "unban", target: msg.handle, by: mod.handle });
+        this.logMod(client, "unban", String(msg?.handle || ""));
+        return;
+      }
+      const handle = String(msg?.handle || "");
+      if (!handle || handle === mod.handle) return;
+      this.bannedHandles.set(handle, { by: mod.handle, ts: Date.now() });
+      this.saveBans();
+      this.broadcast("mod-notice", { type: "ban", target: handle, by: mod.handle });
+      this.logMod(client, "ban", handle);
+      this.kickByHandle(client, mod, handle, "ban");
     });
 
     // Fase 2b: one-shot avatar photo upload at join. Capped at 60KB of dataURL
@@ -166,19 +238,82 @@ export class WorldRoom extends Room<WorldState> {
         return { handle, role: "attendee", isProbe: options.isProbe === true };
       } catch { /* fall through */ }
     }
+    const tokenHash = hashToken(options.token || "");
+    if (this.kickedTokens.has(tokenHash)) {
+      throw new ServerError(403, "kicked");
+    }
     const claims = await verifyToken(options.token);
     if (!claims) throw new ServerError(401, "invalid token");
+    // Fase 6: handle baneado (persistente) → rechazo. El re-join con token
+    // nuevo no evade el ban porque se banea por HANDLE, no por token.
+    if (this.bannedHandles.has(claims.handle)) {
+      throw new ServerError(403, "banned");
+    }
     // Fase 5b (criterio 5, auditor): role fuera del enum → rechazado.
-    // El JWT está firmado por nosotros, pero defensa en profundidad: ni un
-    // token válido introduce un role fuera del enum (p.ej. JWT minteado
-    // antes de un cambio de enum, o bug del emisor).
-    const VALID_ROLES: UserRole[] = ["admin", "speaker", "attendee", "panelist", "dj"];
+    const VALID_ROLES: UserRole[] = ["admin", "moderator", "speaker", "attendee", "panelist", "dj"];
     if (!VALID_ROLES.includes(claims.role as UserRole)) {
       throw new ServerError(401, "invalid role");
     }
+    // recordar el hash del token para que mod:kick pueda invalidar el re-join
+    this.tokenHashBySession.set(client.sessionId, tokenHash);
     // Fase 5b (criterio 9): isProbe viaja fuera del JWT (flag de sesión del
     // cliente probe), nunca otorga roles ni permisos — solo limita voz.
     return { ...claims, isProbe: options.isProbe === true } as typeof claims & { isProbe?: boolean };
+  }
+
+  // --- Fase 6 helpers de moderación ---
+  findByHandle(handle: string): PlayerState | undefined {
+    for (const p of this.state.players.values()) {
+      if ((p.handle || "").trim().toLowerCase() === handle.trim().toLowerCase()) return p;
+    }
+    return undefined;
+  }
+
+  sessionsByHandle(handle: string): Client[] {
+    const h = handle.trim().toLowerCase();
+    const out: Client[] = [];
+    for (const c of this.clients) {
+      const p = this.state.players.get(c.sessionId);
+      if (p && (p.handle || "").trim().toLowerCase() === h) out.push(c);
+    }
+    return out;
+  }
+
+  kickByHandle(modClient: Client, mod: PlayerState, handle: string, kind: "kick" | "ban") {
+    const targets = this.sessionsByHandle(handle);
+    for (const c of targets) {
+      const th = this.tokenHashBySession.get(c.sessionId);
+      if (th) this.kickedTokens.add(th); // el MISMO token ya no vuelve a entrar
+      try { c.send("kicked", { by: mod.handle, kind }); } catch { /* */ }
+      try { c.leave(); } catch { /* */ }
+      this.logMod(modClient, kind, handle);
+    }
+    this.broadcast("mod-notice", { type: kind, target: handle, by: mod.handle });
+  }
+
+  loadBans() {
+    try {
+      if (fs.existsSync(this.bansFile)) {
+        const raw = JSON.parse(fs.readFileSync(this.bansFile, "utf8"));
+        for (const [h, v] of Object.entries(raw || {})) {
+          this.bannedHandles.set(h, v as { by: string; ts: number });
+        }
+      }
+    } catch (e) { console.warn("[bans] load failed:", (e as Error).message); }
+  }
+
+  saveBans() {
+    try {
+      fs.writeFileSync(this.bansFile, JSON.stringify(Object.fromEntries(this.bannedHandles), null, 2));
+    } catch (e) { console.warn("[bans] save failed:", (e as Error).message); }
+  }
+
+  logMod(modClient: Client, action: string, target: string, extra?: string) {
+    console.log(JSON.stringify({
+      ts: new Date().toISOString(), event: "mod", action, target,
+      by: this.state.players.get(modClient.sessionId)?.handle || "?",
+      extra: extra || "", roomId: this.roomId, build: this.state.serverBuild,
+    }));
   }
 
   onJoin(client: Client, _options: any, auth?: { handle: string; role: UserRole }) {
@@ -216,6 +351,7 @@ export class WorldRoom extends Room<WorldState> {
   onLeave(client: Client) {
     this.state.players.delete(client.sessionId);
     this.avatarPhotos.delete(client.sessionId); // Fase 1.3: no filtrar fotos de sesiones muertas
+    this.tokenHashBySession.delete(client.sessionId); // Fase 6: limpiar mapa de sesión
     // Fase 0.2: logging estructurado
     console.log(JSON.stringify({
       ts: new Date().toISOString(),

@@ -7,7 +7,12 @@ export interface User {
   avatarStyle: string;
 }
 
-export type UserRole = "admin" | "speaker" | "attendee" | "panelist" | "dj";
+export type UserRole = "admin" | "moderator" | "speaker" | "attendee" | "panelist" | "dj";
+
+/** Fase 6: puede ejercer moderación (mute/kick/ban). */
+export function isModerationRole(r: UserRole): boolean {
+  return r === "admin" || r === "moderator";
+}
 
 export interface Position {
   x: number; // tile coordinates (float ok during interpolation)

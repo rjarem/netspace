@@ -78,15 +78,44 @@ export function renderUserList(sc: SC) {
       // Pill button with the handle (first word, max 8 chars) — much more intuitive than initials
       const full = (p.handle || id).trim();
       const short = (full.split(/\s+/)[0] || full).slice(0, 8);
+      // Fase 6: borde de color SOBRE por rol (identidad visible sin saturar)
+      const ROLE_BORDER: Record<string, string> = {
+        admin: "#ff5252", moderator: "#00bfa5", speaker: "#7c4dff",
+        panelist: "#ffb74d", dj: "#ffb74d",
+      };
+      const rb = ROLE_BORDER[(p.role || "").toLowerCase()] || "";
       const dot = document.createElement("span");
-      dot.style.cssText = `min-width:26px;height:26px;padding:0 8px;border-radius:13px;background:${p.avatarColor};flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;font:bold 12px system-ui;color:#fff;box-shadow:0 1px 4px #0007;white-space:nowrap;`;
+      dot.style.cssText = `min-width:26px;height:26px;padding:0 8px;border-radius:13px;background:${p.avatarColor};flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;font:bold 12px system-ui;color:#fff;box-shadow:0 1px 4px #0007;white-space:nowrap;`
+        + (rb ? `border:2px solid ${rb};` : "");
       dot.textContent = short;
       row.appendChild(dot);
       if (expanded) {
         const nm = document.createElement("span");
         nm.style.cssText = "font:11px system-ui;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
-        nm.textContent = (p.handle || id) + (isMeRow ? " (yo)" : "");
+        nm.textContent = (p.handle || id) + (isMeRow ? " (yo)" : "") + (p.mutedBy ? " 🙊" : "");
         row.appendChild(nm);
+      }
+      // Fase 6: acciones de moderación (visibles solo si YO soy admin/mod y el
+      // target no soy yo). El server re-verifica el rol del JWT de sesión —
+      // ocultar el botón es solo cosmética, el enforcement es server-side.
+      const myRole = (me?.role || "").toLowerCase();
+      const iAmMod = myRole === "admin" || myRole === "moderator";
+      const targetRole = (p.role || "").toLowerCase();
+      const canAct = iAmMod && !isMeRow && full;
+      if (canAct && expanded) {
+        const btn = (label: string, color: string, send: () => void, title: string) => {
+          const b = document.createElement("button");
+          b.textContent = label; b.title = title;
+          b.style.cssText = `font:11px system-ui;padding:3px 7px;border-radius:6px;border:1px solid ${color};background:transparent;color:${color};cursor:pointer;flex:0 0 auto;`;
+          b.addEventListener("pointerup", (e) => { e.stopPropagation(); e.preventDefault(); send(); });
+          row.appendChild(b);
+        };
+        const isBanned = false; // el estado de ban vive server-side; unban por comando directo
+        btn("🙊", "#ffb74d", () => sc.room?.send("mod:mute", { handle: full, on: !(p as any).mutedBy }), "Mute/Unmute impuesto");
+        if (myRole === "admin") {
+          btn("👢", "#ff8a80", () => sc.room?.send("mod:kick", { handle: full }), "Expulsar (su token no re-entra)");
+          btn("⛔", "#ff5252", () => sc.room?.send("mod:ban", { handle: full }), "Ban permanente");
+        }
       }
       (row as any)._jump = () => {
         try {
