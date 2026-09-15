@@ -1,5 +1,8 @@
 // LiveKit token minting
 import { AccessToken } from "livekit-server-sdk";
+// Fase 5b / H17 (auditor): sala LiveKit por entorno — prod y local NUNCA
+// comparten sala (un probe podía oír la voz de un usuario real).
+const ROOM = process.env.LIVEKIT_ROOM || "netspace-world";
 export async function mintLiveKitToken(opts, _host, apiKey, apiSecret) {
     if (!apiKey || !apiSecret)
         return ""; // voice disabled without config
@@ -8,7 +11,7 @@ export async function mintLiveKitToken(opts, _host, apiKey, apiSecret) {
         name: opts.name,
     });
     at.addGrant({
-        room: "netspace-world",
+        room: ROOM,
         roomJoin: true,
         canPublish: opts.canPublish,
         canSubscribe: opts.canSubscribe,

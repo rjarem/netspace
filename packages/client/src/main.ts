@@ -113,8 +113,10 @@ class WorldScene extends Phaser.Scene {
       // join (el server lo valida en onAuth). Sin invitación: dev-token
       // (solo aceptado mientras DEV_NO_AUTH=1; cuando se apague, sin JWT no
       // hay entrada).
+      // Fase 5b (criterio 9): los probes se marcan isProbe — el server les
+      // niega voz (canPublish/canSubscribe false) para aislarlos de usuarios reales.
       const joinToken = invite || btoa(`dev:${handle}`);
-      const room = (await client.joinOrCreate("world", { token: joinToken })) as Room<any>;
+      const room = (await client.joinOrCreate("world", { token: joinToken, isProbe })) as Room<any>;
       plog("joined roomId=" + room.id);
       // Fase 0 (auditoría 14-sep): v2b-guard DESHABILITADO. Los guards client-side
       // NUNCA hacen leave+rejoin — solo deshabilitan features. El handshake de

@@ -206,7 +206,7 @@ export class WorldRoom extends Room {
         if (process.env.DEV_NO_AUTH === "1" && options.token?.startsWith("ZGV2")) {
             try {
                 const handle = atob(options.token).split(":")[1] || "invitado";
-                return { handle, role: "attendee" };
+                return { handle, role: "attendee", isProbe: options.isProbe === true };
             }
             catch { /* fall through */ }
         }
@@ -221,7 +221,9 @@ export class WorldRoom extends Room {
         if (!VALID_ROLES.includes(claims.role)) {
             throw new ServerError(401, "invalid role");
         }
-        return claims;
+        // Fase 5b (criterio 9): isProbe viaja fuera del JWT (flag de sesión del
+        // cliente probe), nunca otorga roles ni permisos — solo limita voz.
+        return { ...claims, isProbe: options.isProbe === true };
     }
     onJoin(client, _options, auth) {
         const player = new PlayerState();
@@ -287,15 +289,18 @@ export class WorldRoom extends Room {
     }
     async sendLiveKitToken(client, player, zoneId) {
         const zone = this.map.zones.find((z) => z.id === zoneId);
-        // Networking concept: everyone can publish (mic + cam) while chatting.
-        // Zone-based muting (stage areas = listen-only for audience) comes later;
-        // for the MVP dev phase every participant gets publish rights.
-        const canPublish = true;
+        // Fase 5b (criterio 9, auditor): aislamiento de probes. Los clientes
+        // headless (?probe=) obtienen token con canPublish:false +
+        // canSubscribe:false — nunca aparecen como suscriptores de tracks
+        // ajenos ni publican audio fantasma en la sala real. Los gates de
+        // convergencia no necesitan audio.
+        const isProbe = client.auth?.isProbe === true;
+        const canPublish = !isProbe;
         const token = await mintLiveKitToken({
             identity: client.sessionId,
             name: player.handle,
             canPublish: canPublish,
-            canSubscribe: true,
+            canSubscribe: !isProbe,
         }, this.liveKitHost, this.liveKitApiKey, this.liveKitApiSecret);
         client.send("livekit", {
             token,

@@ -40,6 +40,7 @@ interface MoveMsg { x: number; y: number }
 interface StateMsg { micOn?: boolean; camOn?: boolean }
 interface JoinOpts {
   token: string; // signed JWT {handle, role}
+  isProbe?: boolean; // Fase 5b (criterio 9, auditor): headless gates NUNCA entran a voz
 }
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
@@ -162,7 +163,7 @@ export class WorldRoom extends Room<WorldState> {
     if (process.env.DEV_NO_AUTH === "1" && options.token?.startsWith("ZGV2")) {
       try {
         const handle = atob(options.token).split(":")[1] || "invitado";
-        return { handle, role: "attendee" };
+        return { handle, role: "attendee", isProbe: options.isProbe === true };
       } catch { /* fall through */ }
     }
     const claims = await verifyToken(options.token);
@@ -175,7 +176,9 @@ export class WorldRoom extends Room<WorldState> {
     if (!VALID_ROLES.includes(claims.role as UserRole)) {
       throw new ServerError(401, "invalid role");
     }
-    return claims;
+    // Fase 5b (criterio 9): isProbe viaja fuera del JWT (flag de sesión del
+    // cliente probe), nunca otorga roles ni permisos — solo limita voz.
+    return { ...claims, isProbe: options.isProbe === true } as typeof claims & { isProbe?: boolean };
   }
 
   onJoin(client: Client, _options: any, auth?: { handle: string; role: UserRole }) {
@@ -249,15 +252,18 @@ export class WorldRoom extends Room<WorldState> {
 
   async sendLiveKitToken(client: Client, player: PlayerState, zoneId: string) {
     const zone = this.map.zones.find((z) => z.id === zoneId);
-    // Networking concept: everyone can publish (mic + cam) while chatting.
-    // Zone-based muting (stage areas = listen-only for audience) comes later;
-    // for the MVP dev phase every participant gets publish rights.
-    const canPublish = true;
+    // Fase 5b (criterio 9, auditor): aislamiento de probes. Los clientes
+    // headless (?probe=) obtienen token con canPublish:false +
+    // canSubscribe:false — nunca aparecen como suscriptores de tracks
+    // ajenos ni publican audio fantasma en la sala real. Los gates de
+    // convergencia no necesitan audio.
+    const isProbe = client.auth?.isProbe === true;
+    const canPublish = !isProbe;
     const token = await mintLiveKitToken({
       identity: client.sessionId,
       name: player.handle,
       canPublish: canPublish,
-      canSubscribe: true,
+      canSubscribe: !isProbe,
     }, this.liveKitHost, this.liveKitApiKey, this.liveKitApiSecret);
     client.send("livekit", {
       token,
