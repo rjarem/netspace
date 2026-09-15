@@ -12,7 +12,7 @@ export function inviteRouter() {
         const { handle, role, hours } = req.body || {};
         if (!handle)
             return res.status(400).json({ error: "handle required" });
-        const validRoles = ["admin", "speaker", "attendee", "panelist", "dj"];
+        const validRoles = ["admin", "moderator", "speaker", "attendee", "panelist", "dj"];
         const r2 = validRoles.includes(role) ? role : "attendee";
         const exp = Math.floor(Date.now() / 1000) + (Number(hours) || 24) * 3600;
         const secret = process.env.JWT_SECRET || "dev-secret-change-me";

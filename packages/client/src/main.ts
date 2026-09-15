@@ -7,6 +7,7 @@ import {
 import { joinVoice, updateVoiceStatus, onRemoteAudio, updateSpatialAudio, updateSubscriptions } from "./voice";
 import { onRemoteVideo, removeRemoteVideo, ensureBubble, showLocalPreview, updateBubbles } from "./bubbles";
 import { renderMinimap, renderUserList } from "./hud";
+import { installActionBar } from "./actionbar";
 import { onServerPosition, tick, animateOwnMove } from "./movement";
 import { initControls } from "./controls";
 import { runGreenRoom, type GreenRoomResult } from "./greenroom";
@@ -248,6 +249,9 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       // toggle expand only when clicking the container itself (not a pill row)
       if (ev.target === ul) ul.dataset.exp = ul.dataset.exp === "1" ? "0" : "1";
     });
+
+    // Fase 7: barra de acciones flotante (mic, emojis, salir) — decisión Tito 15-sep
+    try { installActionBar(this); } catch (e) { console.warn("[actionbar]", e); }
 
     // d-pad rosetta REMOVED (v2 controls, decision 13-sep): was stealing screen
     // space on mobile; drag & click-to-move replace it entirely.

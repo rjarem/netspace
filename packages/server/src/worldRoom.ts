@@ -199,6 +199,19 @@ export class WorldRoom extends Room<WorldState> {
       this.kickByHandle(client, mod, handle, "ban");
     });
 
+    // Fase 7: relay de emojis — broadcast a todos (los clientes los renderizan
+    // flotando sobre el avatar emisor). Rate cap: 1 emoji/s por usuario.
+    const lastEmojiAt = new Map<string, number>();
+    this.onMessage("emoji", (client, msg: { emoji: string }) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      const now = Date.now();
+      if (now - (lastEmojiAt.get(client.sessionId) || 0) < 1000) return;
+      lastEmojiAt.set(client.sessionId, now);
+      if (typeof msg?.emoji !== "string" || msg.emoji.length > 8) return;
+      this.broadcast("emoji", { handle: p.handle, emoji: msg.emoji });
+    });
+
     // Fase 2b: one-shot avatar photo upload at join. Capped at 60KB of dataURL
     // (client sends ~256px jpeg q0.82 ≈ 15-30KB) to keep the state payload sane.
     // Version handshake: clients ping "v2b" — only servers with the 2b build
