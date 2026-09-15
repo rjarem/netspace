@@ -244,6 +244,12 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       ns.dbg.push(s);
       if (ns.dbg.length > 50) ns.dbg.shift();
     }
+    // Fase 5c (auditor): en probe mode, pushDbg también va a /api/probelog —
+    // los eventos de voz (TrackSubscribed→audio-remote) son la señal clave.
+    const ph = new URLSearchParams(location.search).get("probe");
+    if (ph) {
+      try { fetch("http://127.0.0.1:2567/api/probelog?m=" + encodeURIComponent(`${ph}: dbg:${s}`)).catch(() => {}); } catch {}
+    }
   }
 
 

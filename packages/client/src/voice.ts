@@ -26,6 +26,7 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
     try {
       if (sc.lkRoom) { await sc.lkRoom.disconnect(); sc.lkRoom = null; }
       const { Room, RoomEvent } = await import("livekit-client");
+      (window as any).__lk = { RoomEvent };
       const room = new Room({ adaptiveStream: true, dynacast: true });
       room.on(RoomEvent.TrackSubscribed, (track: any, pub: any, participant: any) => {
         if (track.kind === "audio") sc.onRemoteAudio(participant.identity, track);
@@ -39,6 +40,12 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
       room.on(RoomEvent.LocalTrackPublished, (pub: any) => {
         if (pub.kind === "video") sc.showLocalPreview(pub);
       });
+      // Fase 5c (auditor, P0): instrumentación temporal de voz con ?voicetest=1
+      // ANTES del connect — captura TODOS los TrackSubscribed (si se envuelve
+      // después, los tracks que llegan durante el await connect() escapan).
+      if (new URLSearchParams(location.search).has("voicetest")) {
+        try { const vt = await import("./voicetest"); vt.instrumentVoice(sc, room); } catch {}
+      }
       await room.connect(msg.url, msg.token);
       sc.lkRoom = room;
       sc.pushDbg("voice-ok:" + msg.zoneId);
@@ -88,6 +95,18 @@ export function updateVoiceStatus(sc: SC) {
   }
 
 export function onRemoteAudio(sc: SC, identity: string, track: any) {
+    // Fase 5c FIX (P0 audio conversacional): IDEMPOTENCIA. Este handler corre
+    // 2x para el mismo track: una vía TrackSubscribed (el track puede llegar
+    // durante el await connect) y otra vía el loop "already-subscribed" del
+    // rejoin. Recrear la cadena sobre el mismo MediaStream deja la 2ª fuente
+    // SILENCIOSA en Chrome — p.audioNode apunta a la cadena muda y el remoto
+    // se vuelve inaudible (bug intermitente: "hablo y no me escuchan").
+    // Si ya hay cadena para este identity, no tocar nada.
+    const existing = sc.players.get(identity);
+    if (existing?.audioNode) {
+      sc.pushDbg("audio-remote-skip:" + identity);
+      return;
+    }
     const p = sc.players.get(identity);
     if (!p) {
       // participant may not have a sprite yet; stash and retry on render loop

@@ -236,32 +236,151 @@ Completado y verificado por el auditor contra código y prod:
   pendiente formal de Fase 4 queda CERRADO. Hallazgo documentado: los 2
   Firefox requieren 2s de stagger (singleton).
 
-**Resto de 5a (rápido, ANTES de 5b):**
-1. Enganchar `check-dist-fresh.sh` a `run-gates.sh` (sanity) Y a un hook
-   pre-push — la corrección de fondo de la lección 1 no se cierra sin esto.
-2. Borrar restos de radio/proximidad muertos en `shared` (curva lineal vieja,
-   H9) — con el broadcast eliminado, la curva duplicada ya no tiene razón.
-3. PHOTO_BUDGET: subir de 4000 a **16000** (16KB). El techo real es 1MB y la
-   validación server es 60KB; 16KB da calidad visiblemente mejor con margen
-   amplio, y acota el burst de late-join (50 fotos ≈ 800KB, aceptable en
-   móvil). La compresión iterativa se queda como mecanismo de seguridad.
-4. Prueba de carga con N clientes sintéticos: DIFERIDA con disparadores
-   explícitos — obligatoria antes de (a) cualquier evento que espere >50
-   personas, o (b) subir `maxClients` de 150. Mientras ambas cosas no
-   ocurran, el techo honesto sigue siendo el de la sección 4.
+**Resto de 5a — ✅ COMPLETADO (15-sep, HEAD `ee55950`). FASE 5a CERRADA.**
+1. ✅ `check-dist-fresh.sh` enganchado a `run-gates.sh` (línea 19, sanity con
+   exit 2) Y a `.git/hooks/pre-push` — verificado en ambos sentidos (STALE →
+   bloquea; fresco → pasa). Nota: el hook vive en `.git/hooks` (no versionado)
+   — si el repo se clona en otra máquina, hay que reinstalarlo; documentado.
+2. ✅ Restos de radio eliminados de `shared` (`proximityVolume`, `tileDist`,
+   `computeProximity` — 0 usos verificados con grep antes de borrar; tests
+   reescritos). H9 CERRADO.
+3. ✅ PHOTO_BUDGET 4000 → 16000. Verificado por Tito: fotos 16KB sin
+   aislamiento; payloadprobe confirma margen (techo real 1MB).
+4. Prueba de carga: sigue DIFERIDA con los mismos disparadores (>50 personas
+   esperadas o subir `maxClients` de 150).
 
-**5b. Seguridad/auth (riesgo: medio)** — SIGUIENTE BLOQUE tras el resto de 5a.
+**Incidencia de deploy (15-sep) y su corrección de fondo:** el deploy de
+`a326f09` sirvió 404 en `/assets/` — el bundle nuevo no quedó trackeado en git
+(dist en .gitignore; el viejo force-added se borró sin agregar el nuevo).
+`check-dist-fresh.sh` NO cubre este caso (mide frescura local, no tracking).
+Fix en `ee55950`. **CONDICIÓN PREVIA A 5b (trabajo de minutos):** gate
+pre-push adicional que verifique que el bundle referenciado en
+`packages/client/dist/index.html` existe como blob en git
+(`git ls-files --error-unmatch` o `git cat-file -e`). Cierra la clase de fallo
+completa: frescura (ya cubierta) + tracking (este gate).
+
+**Comportamiento conocido registrado (decisión de Tito, avalada por el
+auditor):** los avatares pueden encimarse (spawn adyacente y superposición
+manual). Sin criterio de aceptación por ahora — con multitudes el pod natural
+hasta beneficia. Si en un evento real se reporta como problema, la solución
+es soft-collision (empuje suave) en una fase UI futura; NO es deuda de 5b.
+
+**Pendiente UX registrado (post-5b):** botón "Salir" — rojo, claramente
+visible, bajo el panel de usuarios en línea o en la toolbar; saca de la
+sesión limpiamente. Micro-tarea que puede viajar con la Fase 6 o 7.
+
+### Fase 5c — HOTFIX P0: audio conversacional (el que habla NO debe callar a todos)
+
+**Reporte de Tito (15-sep):** cuando un usuario habla, los demás no pueden
+interrumpir — si A dice "1,2,3,4" y B se acerca y dice "hola", NI A NI NADIE
+escucha a B. El sistema debería comportarse como una plática normal: varios
+pueden hablar a la vez y se oyen todos (la única excepción de silenciamiento
+será el modo broadcast del admin, Fase 8 — feature, no bug).
+
+**Severidad: P0** — pega en la mecánica central del producto (la proximidad ES
+la sala). Nota honesta: el audio multi-hablante NUNCA se validó de verdad (la
+prueba del fade con 2+ personas estaba diferida desde el 13-sep) — el bug
+puede ser anterior a 5a; el refactor de AudioContext compartido preservó
+gain/panner POR PISTA (verificado leyendo `voice.ts` completo), así que 5a no
+es sospechoso principal.
+
+**Inspección de código ya hecha por el auditor (descartes):** `voice.ts` crea
+una cadena source→gain→panner INDEPENDIENTE por pista remota (líneas 109-113);
+`updateSpatialAudio` calcula vol/pan por jugador remoto (134-162);
+`updateSubscriptions` suscribe por distancia a CADA participante (165-180).
+Nada ahí silencia a los demás hablantes por diseño. El bug está en una de las
+capas de abajo — a discriminar con reproducción.
+
+**Sospechosos en orden (regla: REPRODUCIR PRIMERO, hipotetizar después):**
+- **S1 — Publish-side:** el mic del segundo dispositivo nunca publica
+  (`setMicrophoneEnabled` falla en silencio, constraints, o permiso en ese
+  flujo). Discriminador: Admin API de LiveKit / estado del participante —
+  ¿tiene publicación de audio VIVA?
+- **S2 — Subscribe-side + dynacast:** `updateSubscriptions` con posición
+  stale del sprite desuscribe a B en los clientes; con `dynacast:true` el
+  track se PAUSA upstream cuando nadie lo suscribe → nadie recibe a B.
+  Discriminador: `pub.isSubscribed` por participante en cada cliente cuando
+  todos están dentro del radio.
+- **S3 — Render-side:** la segunda cadena de audio no se crea (excepción en
+  `onRemoteAudio` para la segunda pista, o identidad sin sprite y el retry de
+  300ms se pierde en silencio). Discriminador: `__ns.dbg` debe tener
+  `audio-remote:<id>` por CADA identidad remota; `p.audioNode` debe existir
+  por cada jugador remoto cercano.
+- **S4 — Nivel OS móvil (VPIO/half-duplex):** el modo voz del teléfono
+  atenúa la salida mientras el mic está activo. SOLO explicaría que el
+  hablante no oiga en SU dispositivo — no que "nadie" oiga. Verificar si el
+  bug también ocurre PC-a-PC para descartarlo.
+
+**Directiva de diagnóstico (antes de tocar el fix):**
+1. Probe de 3 clientes headless Firefox con media FAKE
+   (`media.navigator.streams.fake=true` en el perfil — publica tono) dentro
+   del radio de audio. Aserciones deterministas: cada cliente tiene
+   `pub.isSubscribed===true` para AMBAS pubs de audio remotas; cada uno tiene
+   2 cadenas (`audio-remote:A` y `audio-remote:B` en dbg); cada
+   `localParticipant` tiene su publicación de audio viva.
+2. Medición REAL de señal: AnalyserNode (RMS) en la cadena de CADA remoto —
+   con 2 fake-mics activos, AMBAS cadenas deben mostrar señal > umbral
+   SIMULTÁNEAMENTE. Este es el gate que reproduce el bug de Tito sin Tito.
+3. Logging temporal de eventos LiveKit (TrackSubscribed/Unsubscribed/
+   Published + identidad) para ver quién desaparece y cuándo.
+4. Con la causa identificada y DOCUMENTADA, recién entonces el fix.
+
+**Criterios de aceptación medibles de 5c:**
+- Causa raíz documentada en el handoff (cuál de S1-S4 u otra, con evidencia).
+- Gate de conversación (el probe del punto 2) PASS: 2 hablantes simultáneos
+  audibles en un 3er cliente y entre sí.
+- Prueba de Tito con 3 dispositivos: A habla, B interrumpe, ambos se oyen en
+  los 3; plática de ida y vuelta normal; fade por distancia sigue funcionando.
+- Sin regresión: gates locales 4/4 + gate A prod + avatarprobe prod.
+
+**Preguntas para Tito (responder cuando pueda; el probe las adelanta):**
+1. ¿En qué dispositivos/navegadores lo observaste (PC Chrome? qué navegador
+   en los teléfonos)?
+2. ¿Los dispositivos estaban en el mismo cuarto físico? (confunde la prueba:
+   la voz entra acústicamente por el otro mic)
+3. ¿El segundo hablante APARECÍA como conectado a voz en el status de los
+   demás (🎙️ N en voz) y estaban cerca EN EL MAPA (≤8 tiles)?
+
+**5b. Seguridad/auth (riesgo: medio)** — AUTORIZADA (15-sep). Orden actualizado:
+(0) gate pre-push de bundle trackeado → (1) FASE 5c (hotfix audio P0) →
+(2) 5b. La 5b no se toca hasta que la conversación multi-hablante esté
+verificada — el audio roto es más urgente que la auth para un producto cuya
+mecánica central ES hablar.
 - Objetivo: cerrar H1 y H2.
-- Cambios: cliente aprende a pedir token real (flujo: link con `?invite=<jwt>` o
-  campo "código de evento" en la Antesala → `/api/invite`); rotar JWT_SECRET y
-  ADMIN_TOKEN; LiveKit fuera de `--dev` con llaves reales (actualizar
-  `LIVEKIT_API_KEY/SECRET` del servicio world en el mismo compose); DESPUÉS de
-  verificado, `DEV_NO_AUTH=0`.
-- Dependencias: 5a no es prerequisito, pero conviene deployarlas juntas.
-- Criterios: gate de entrada nuevo (join con token válido → OK; join con token
-  dev → 401; join con token expirado → 401); probe de voz con llaves nuevas;
-  rollback = compose.update anterior.
-- Riesgo: **medio** (si sale mal, nadie entra — por eso gate de entrada primero).
+- Orden obligatorio: (1) auth real → (2) rotación de secretos → (3) LiveKit
+  fuera de `--dev` → (4) `DEV_NO_AUTH=0` AL FINAL, solo con el gate de entrada
+  verde en prod.
+- Cambios: cliente aprende a pedir token real (link `?invite=<jwt>` o campo
+  "código de evento" en la Antesala → `/api/invite`); endpoint admin para
+  mintear tokens (protegido por ADMIN_TOKEN — lo usan Tito y los probes);
+  rotar JWT_SECRET y ADMIN_TOKEN; LiveKit fuera de `--dev` con llaves reales
+  generadas (actualizar `LIVEKIT_KEYS` del servicio livekit Y
+  `LIVEKIT_API_KEY/SECRET` del servicio world en el MISMO compose.update);
+  DESPUÉS de verificado, `DEV_NO_AUTH=***`.
+- **Criterios de aceptación medibles (todos contra script re-ejecutable):**
+  1. Gate de entrada nuevo (`scripts/authgate.*`, corre contra local y prod):
+     join con JWT válido → entra con handle/role correctos; join con token dev
+     (`btoa("dev:x")`) con DEV_NO_AUTH=0 → 401; join con token expirado → 401;
+     join con token firmado con el secreto VIEJO (post-rotación) → 401; join
+     con role fuera del enum → rechazado.
+  2. Flujo de invitado E2E: `?invite=<jwt>` (o código en Antesala) →
+     `/api/invite` → Antesala → entra. Probe sin pasos manuales.
+  3. Rotación verificada: token con secreto viejo → 401; con secreto nuevo →
+     OK. Secretos viejos documentados como rotados en el handoff.
+  4. LiveKit fuera de --dev: probe de voz contra prod con llaves nuevas →
+     token mintea y la sala LiveKit acepta el join; Admin API `ListRooms` con
+     llaves nuevas responde; con `devkey/devsecret-change-me` → falla auth.
+  5. **Los gates y probes siguen funcionando con DEV_NO_AUTH=0:** el flujo
+     `?probe=` obtiene JWT vía el endpoint admin (ADMIN_TOKEN en env del
+     runner, NUNCA hardcodeado en el repo). Gate A + avatarprobe + authgate
+     contra prod, todos PASS con auth apagada para dev.
+  6. Sin regresión: gates locales 4/4 tras cada deploy de la fase; Tito entra
+     desde 2 dispositivos con link de invitado al final.
+  7. Rollback documentado ANTES de cada compose.update (procedimiento
+     estándar: guardar copia real del compose, pin anterior).
+- Riesgo: **medio** (si sale mal, nadie entra — por eso el gate de entrada se
+  construye y pasa contra LOCAL primero, luego contra prod con DEV_NO_AUTH=***
+  todavía en 1, y solo al final se apaga).
 
 ### Fase 6 — Roles + moderación (base de casi todo)
 - Objetivo: roles de la visión + moderación real (H10, H11).
@@ -549,3 +668,22 @@ propio). **No inventar SSO propio contra HeySummit: no lo ofrecen.**
   1MB, validación server 60KB); prueba de carga diferida con disparadores
   (>50 personas o subir maxClients); resto de 5a (enganchar check-dist-fresh
   a run-gates + pre-push, limpiar restos de radio en shared) ANTES de 5b.
+- v5 (15-sep-2026): FASE 5a CERRADA (HEAD ee55950, verificado: pre-push hook
+  activo, 0 restos de proximidad en shared, PHOTO_BUDGET=16000, bundle
+  trackeado, prod==dist). Incidencia de deploy documentada (bundle no
+  trackeado → 404 en /assets/): corrección de fondo = gate pre-push de bundle
+  trackeado, CONDICIÓN PREVIA a 5b. Encimado de avatares registrado como
+  comportamiento conocido sin criterio (soft-collision futura si molesta).
+  Botón "Salir" registrado como micro-tarea post-5b. FASE 5b AUTORIZADA con
+  orden (1) auth real → (2) rotación → (3) LiveKit fuera de --dev → (4)
+  DEV_NO_AUTH=0 al final, y 7 criterios de aceptación medibles (incluye:
+  gates/probes deben seguir funcionando con auth apagada vía endpoint admin).
+- v6 (15-sep-2026): bug P0 reportado por Tito — el que habla calla a todos
+  (un segundo hablante no lo oye NADIE). Registrado como Fase 5c con
+  diagnóstico-antes-de-fix: inspección de voice.ts descarta el render
+  (cadenas por pista correctas); sospechosos S1 publish / S2 subscribe+
+  dynacast / S3 render / S4 OS móvil. Gate nuevo: 3 clientes headless con
+  fake-media + AnalyserNode RMS por cadena remota — 2 hablantes simultáneos
+  audibles. Orden actualizado: gate bundle-trackeado → 5c → 5b. El audio
+  multi-hablante NUNCA se había validado (prueba del fade diferida desde
+  13-sep) — el bug puede ser anterior a 5a.
