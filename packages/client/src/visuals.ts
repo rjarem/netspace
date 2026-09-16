@@ -247,20 +247,25 @@ export function updateVisuals(sc: SC, scene: any) {
     const target = mapScale(dist);
     p.visScale = (p.visScale ?? 1) + (target - (p.visScale ?? 1)) * 0.25;
     const l = p.visScale;
-    // Avatar Phaser (rect + cara) — la etiqueta NO escala.
-    // Fix (Tito, campo): la cara/foto del canvas es CUADRADA y se veía a
-    // través de la burbuja translúcida → oculta SOLO mientras la burbuja es
-    // visible; cuando el fade la apaga (≥7.5 tiles), la cara vuelve para que
-    // el jugador lejano NO quede como puntito sin avatar.
+    // Avatar Phaser (rect + cara): oculto SIEMPRE que hay burbuja HTML —
+    // el avatar lejano NO es la cara cuadrada del canvas, es la burbuja en
+    // modo FOTO (redonda, como antes).
     p.sprite?.setScale?.(l);
-    const bub2 = p.bubble as HTMLDivElement | undefined;
-    const farFade = mapVideoAlpha(dist) <= 0.02;
-    if (p.sprite?.faceRef) p.sprite.faceRef.setVisible(!bub2 || farFade);
-    // Fade del video: termina a 7.5 tiles, antes del corte real a 8
+    if (p.sprite?.faceRef) p.sprite.faceRef.setVisible(!p.bubble);
+    // Fade del video: termina a 7.5 tiles, antes del corte real a 8.
+    // Lejos (fade agotado): la burbuja entra en MODO FOTO — opacidad plena,
+    // redonda, pequeña: el avatar lejano visible como antes del Ciclo 2.
     const bub = p.bubble as HTMLDivElement | undefined;
     if (bub) {
       const va = mapVideoAlpha(dist);
-      bub.style.opacity = String(va);
+      if (va <= 0.02) {
+        // modo foto: burbuja redonda visible con la imagen del avatar
+        bub.style.opacity = "1";
+        if (p.video) p.video.style.display = "none";
+        if (p.bubbleImg) p.bubbleImg.style.display = "block";
+      } else {
+        bub.style.opacity = String(va);
+      }
       bub.style.transformOrigin = "center";
     }
     // Hablando (audioLevel RTP + fallback) — alimenta al halo
