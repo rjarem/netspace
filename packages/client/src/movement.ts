@@ -107,7 +107,12 @@ export function tick(sc: SC) {
       }
     } else return;
 
-    const nx = cur.x + dir!.dx, ny = cur.y + dir!.dy;
+    // Fix (Tito, 16-sep): si el target se limpió (llegó a destino o camino
+    // bloqueado) dir es null — `dir!.dx` crasheaba el loop de update y con él
+    // updateSpatialAudio (audio muerto al alejarse/acercarse: sin re-suscripción
+    // ni ganancia). Return limpio y el loop sigue vivo.
+    if (!dir) return;
+    const nx = cur.x + dir.dx, ny = cur.y + dir.dy;
     if (tileBlocked(nx, ny)) return; // client-side pre-check; server still validates
 
     sc.moveLock = true;
