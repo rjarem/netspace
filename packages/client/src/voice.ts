@@ -71,7 +71,7 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
       if (grStream && grStream.getAudioTracks().length) {
         try {
           for (const t of grStream.getAudioTracks()) {
-            await room.localParticipant.publishTrack(t, { source: "microphone" });
+            await room.localParticipant.publishTrack(t, { source: "microphone" as any });
           }
           sc.updateVoiceStatus();
         } catch (micErr) {
@@ -91,7 +91,7 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
         if (camTracks.length) {
           try {
             for (const t of camTracks) {
-              await room.localParticipant.publishTrack(t, { source: "camera" });
+              await room.localParticipant.publishTrack(t, { source: "camera" as any });
             }
             sc.pushDbg("cam-ok:" + msg.zoneId);
           } catch (camErr) {
