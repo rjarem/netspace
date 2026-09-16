@@ -7,13 +7,6 @@
 // Barra fija abajo-centro, tap targets ≥44px, safe-area-inset para Android/iOS.
 type SC = any;
 
-const EMOJIS: Array<[string, string]> = [
-  ["😀", "feliz"],
-  ["😡", "enojado"],
-  ["❤️", "corazón"],
-  ["👍", "like"],
-];
-
 const CSS = `
 @keyframes grEmojiFloat {
   0%   { transform: translate(-50%, 0) scale(0.6); opacity: 0; }
@@ -26,13 +19,27 @@ const CSS = `
   display: flex; align-items: center; gap: 8px; padding: 6px 10px;
   background: rgba(11,14,22,.86); border: 1px solid #2a3350; border-radius: 28px;
   box-shadow: 0 2px 12px #000a; }
+/* Barra monocromática (Tito, 17-sep): iconos un solo tono; el ÚNICO color de
+ * la barra es el rojo del botón Salir (.gr-keep-color). Estado activo = glow,
+ * no color extra. */
 #gr-actionbar button { min-width: 44px; min-height: 44px; border: none;
   background: transparent; font-size: 22px; cursor: pointer; border-radius: 50%;
-  line-height: 1; }
+  line-height: 1; filter: grayscale(1) brightness(1.55); }
+#gr-actionbar button.gr-keep-color { filter: none; }
 #gr-actionbar button:active { background: #1c2438; }
-#gr-actionbar .gr-mic-on  { filter: drop-shadow(0 0 4px #4f7cff); }
-#gr-actionbar .gr-mic-off { filter: grayscale(1) brightness(.75); }
+#gr-actionbar .gr-mic-on  { filter: grayscale(1) brightness(1.55) drop-shadow(0 0 5px #4f7cff); }
+#gr-actionbar .gr-mic-off { filter: grayscale(1) brightness(.6); }
 #gr-emojilayer { position: fixed; inset: 0; pointer-events: none; z-index: 70; }
+/* Overlay de emojis (Ciclo 1): paleta a color sobre la barra; queda abierto
+ * hasta ENVIAR; cooldown anti-spam. */
+#gr-emojipalette { position: fixed; left: 50%; transform: translateX(-50%);
+  bottom: calc(70px + env(safe-area-inset-bottom, 0px)); z-index: 85;
+  display: flex; gap: 6px; padding: 8px 12px; background: rgba(11,14,22,.92);
+  border: 1px solid #2a3350; border-radius: 22px; box-shadow: 0 4px 16px #000a; }
+#gr-emojipalette button { min-width: 44px; min-height: 44px; border: none;
+  background: transparent; font-size: 26px; cursor: pointer; border-radius: 50%; }
+#gr-emojipalette button:active { background: #1c2438; }
+#gr-emojipalette button:disabled { opacity: .35; cursor: default; }
 `;
 
 export function installActionBar(sc: SC) {
@@ -94,17 +101,40 @@ export function installActionBar(sc: SC) {
   };
   bar.appendChild(micBtn);
 
-  // --- Emojis ---
-  for (const [glyph, name] of EMOJIS) {
-    const b = document.createElement("button");
-    b.title = name;
-    b.textContent = glyph;
-    b.onclick = () => {
-      sc.room?.send("emoji", { emoji: glyph });
-      showFloatingEmoji(sc, glyph, sc.myId, (sc.players.get(sc.myId)?.handle) || "yo");
-    };
-    bar.appendChild(b);
-  }
+  // --- Emojis (Ciclo 1, Tito): UN botón 🎭 en la barra; overlay con paleta
+  // a color que QUEDA ABIERTO hasta que envías (al enviar se cierra);
+  // cooldown 2.5s anti-spam. La paleta SÍ es a color (no monocroma).
+  let palette: HTMLDivElement | null = null;
+  let lastSent = 0;
+  const togglePalette = () => {
+    if (palette) { palette.remove(); palette = null; return; }
+    palette = document.createElement("div");
+    palette.id = "gr-emojipalette";
+    const set: Array<[string, string]> = [
+      ["❤️", "corazón"], ["👍", "like"], ["👎", "dislike"],
+      ["😡", "enojado"], ["😀", "feliz"], ["😂", "carcajada"],
+    ];
+    for (const [glyph, name] of set) {
+      const b = document.createElement("button");
+      b.title = name;
+      b.textContent = glyph;
+      b.onclick = () => {
+        const now = Date.now();
+        if (now - lastSent < 2500) return; // cooldown 2.5s
+        lastSent = now;
+        sc.room?.send("emoji", { emoji: glyph });
+        showFloatingEmoji(sc, glyph, sc.myId, (sc.players.get(sc.myId)?.handle) || "yo");
+        palette?.remove(); palette = null; // al ENVIAR se cierra
+      };
+      palette.appendChild(b);
+    }
+    document.body.appendChild(palette);
+  };
+  const emojiBtn = document.createElement("button");
+  emojiBtn.title = "Reacciones (emojis)";
+  emojiBtn.textContent = "🎭";
+  emojiBtn.onclick = togglePalette;
+  bar.appendChild(emojiBtn);
 
   // --- Fase 8: pedir la palabra (🙋) — cualquier usuario ---
   const handBtn = document.createElement("button");
@@ -157,10 +187,11 @@ export function installActionBar(sc: SC) {
     bar.appendChild(scrBtn);
   }
 
-  // --- Salir (rojo, decisión Tito 15-sep) ---
+  // --- Salir (rojo, decisión Tito 15-sep) — ÚNICO botón con color de la barra ---
   const exit = document.createElement("button");
   exit.title = "Salir de la sesión";
   exit.textContent = "🚪";
+  exit.className = "gr-keep-color";
   exit.style.color = "#ff5252";
   exit.style.fontSize = "24px";
   exit.onclick = async () => {

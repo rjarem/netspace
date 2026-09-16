@@ -1,4 +1,8 @@
 // Fase 5c (auditor, P0 audio conversacional): probe de 3 clientes headless
+// ⚠️ DEPRECATED (auditor 17-sep): entra con ?probe= → canPublish/canSubscribe
+// false → estructuralmente NO puede medir publicación ni recepción; su "6/6"
+// fabricaba confianza. NO usar como gate. Cobertura real: antesala-e2e
+// (publicación) + reapproachprobe (recepción/espacial/recuperación).
 // con media fake contra PROD. Verifica: cada cliente publicado (mic vivo),
 // suscrito a los 2 remotos, y 2 cadenas de audio creadas.
 // Medición RMS con AnalyserNode en la cadena de cada remoto (directiva 2).
