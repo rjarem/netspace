@@ -34,8 +34,8 @@ export function installMapOverlay(sc: SC) {
   const style = document.createElement("style");
   style.textContent = `
 #gr-mapoverlay { position: fixed; right: 10px; bottom: calc(74px + env(safe-area-inset-bottom, 0px));
-  z-index: 75; background: #e8eaee; border: 1px solid #4f7cff; border-radius: 12px;
-  padding: 10px; box-shadow: 0 4px 18px #000a; display: none;
+  z-index: 75; background: #e8eaee; border: 1px solid #4f7cff; border-radius: 10px;
+  padding: 4px; box-shadow: 0 4px 18px #000a; display: none;
   opacity: 0; transition: opacity .25s ease; }
 #gr-mapoverlay.gr-open { display: block; }
 #gr-mapoverlay.gr-shown { opacity: 1; }
