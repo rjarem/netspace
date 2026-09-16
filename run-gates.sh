@@ -43,7 +43,7 @@ rm -rf /tmp/gr-ff-gateC* 2>/dev/null   # perfiles viejos confunden al singleton
 for r in 1 2 3 4 5; do
   # stagger 2s entre rounds además del stagger interno del runner
   sleep 2
-  npx tsx packages/server/scripts/headless-gateC.ts "$r" 14 >/dev/null 2>&1
+  npx tsx packages/server/scripts/headless-gateC.ts "$r" 22 >/dev/null 2>&1
   echo "round $r ejecutado"
 done
 sleep 3
@@ -55,13 +55,13 @@ for r in 1 2 3 4 5; do
   RB=$(tail -n +"$BEFORE" "$LOG" | grep "\"event\":\"join\"" | grep "\"handle\":\"gate${r}B\"" | grep -oE '"roomId":"[^"]+"' | head -1)
   if [ -n "$RA" ] && [ "$RA" = "$RB" ]; then
     echo "round $r: A y B en $RA ✓"
-  elif [ -z "$RB" ]; then
-    # B nunca llegó a connect (boot-fail de firefox: 0 probelog) — runner
+  elif [ -z "$RB" ] || [ -z "$RA" ]; then
+    # una página nunca llegó a connect (boot-fail de firefox) — runner
     # flaky, NO split de matchmaking. Re-ejecutar ese round una vez.
-    echo "round $r: B no conectó (boot-fail) — reintento..."
+    echo "round $r: página sin conectar (boot-fail: A=$RA B=$RB) — reintento..."
     sleep 2
     pkill -9 -f firefox 2>/dev/null; sleep 2
-    npx tsx packages/server/scripts/headless-gateC.ts "$r" 14 >/dev/null 2>&1
+    npx tsx packages/server/scripts/headless-gateC.ts "$r" 22 >/dev/null 2>&1
     sleep 3
     RA2=$(tail -n +"$BEFORE" "$LOG" | grep "\"event\":\"join\"" | grep "\"handle\":\"gate${r}A\"" | grep -oE '"roomId":"[^"]+"' | tail -1)
     RB2=$(tail -n +"$BEFORE" "$LOG" | grep "\"event\":\"join\"" | grep "\"handle\":\"gate${r}B\"" | grep -oE '"roomId":"[^"]+"' | tail -1)
