@@ -146,6 +146,21 @@ export function updateHalos(sc: SC, scene: any) {
     // usuarios normales silenciosos: halo MUY sutil)
     const targetAlpha = speaking ? 0.95 : (targetColor !== ROLE_COLOR_DEFAULT ? 0.9 : 0.45);
     p.roleHalo.strokeAlpha = p.roleHalo.strokeAlpha == null ? 0 : p.roleHalo.strokeAlpha + (targetAlpha - p.roleHalo.strokeAlpha) * 0.12;
+    // CAPA HTML (Tito, diagnóstico 17-sep): la burbuja de video/avatar es un
+    // div HTML por ENCIMA del canvas — tapa el anillo Phaser. Pintar el rol
+    // DIRECTO en la burbuja: borde del color del rol (+ glow verde al hablar).
+    const bub = p.bubble as HTMLDivElement | undefined;
+    if (bub) {
+      if (!bub.dataset.grRoleStyled) {
+        bub.dataset.grRoleStyled = "1";
+        bub.style.transition = "border-color .3s, box-shadow .3s";
+      }
+      const hex = "#" + targetColor.toString(16).padStart(6, "0");
+      bub.style.borderColor = hex;
+      bub.style.boxShadow = speaking ? `0 0 12px 3px ${hex}` : "0 2px 8px #0009";
+      const tag = bub.querySelector("div[style*='background:#000000aa']") as HTMLElement | null;
+      if (tag) tag.style.background = hex + "cc";
+    }
   }
 }
 

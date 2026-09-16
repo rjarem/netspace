@@ -194,11 +194,35 @@ export function installActionBar(sc: SC) {
   exit.className = "gr-keep-color";
   exit.style.color = "#ff5252";
   exit.style.fontSize = "24px";
-  exit.onclick = async () => {
-    try { await sc.lkRoom?.disconnect(); } catch { /* */ }
-    try { await sc.room?.leave(true); } catch { /* */ }
-    // Volver a la Antesala limpia (sin invite en la URL)
-    location.href = location.origin + "/";
+  exit.onclick = () => {
+    // Confirmación (Tito, 17-sep): salidas accidentales por tap — overlay con
+    // OK/Cancelar, mismo patrón que emojis y mapa.
+    if (document.getElementById("gr-exitconfirm")) return;
+    const ov = document.createElement("div");
+    ov.id = "gr-exitconfirm";
+    ov.style.cssText = "position:fixed;inset:0;z-index:120;background:#000000b0;display:flex;align-items:center;justify-content:center;";
+    const card = document.createElement("div");
+    card.style.cssText = "background:#151a26;border:1px solid #2a3350;border-radius:14px;padding:22px 26px;text-align:center;box-shadow:0 6px 24px #000c;max-width:88vw;";
+    card.innerHTML = `<div style="font:600 16px system-ui;color:#fff;margin-bottom:16px;">¿Seguro que quieres salir de la sesión?</div>`;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:10px;justify-content:center;";
+    const mk = (txt: string, bg: string, cb: () => void) => {
+      const b = document.createElement("button");
+      b.textContent = txt;
+      b.style.cssText = `min-width:110px;min-height:44px;border:none;border-radius:10px;font:600 15px system-ui;color:#fff;background:${bg};cursor:pointer;`;
+      b.onclick = () => { ov.remove(); cb(); };
+      return b;
+    };
+    row.appendChild(mk("Cancelar", "#2a3350", () => {}));
+    row.appendChild(mk("Salir", "#d32f2f", async () => {
+      try { await sc.lkRoom?.disconnect(); } catch { /* */ }
+      try { await sc.room?.leave(true); } catch { /* */ }
+      location.href = location.origin + "/";
+    }));
+    card.appendChild(row);
+    ov.appendChild(card);
+    ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+    document.body.appendChild(ov);
   };
   bar.appendChild(exit);
 
