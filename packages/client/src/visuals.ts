@@ -190,7 +190,7 @@ export function wireActiveSpeakers(room: any) {
  *   (no analyser, no getStats), umbral 0.03, ataque inmediato, decay 300ms,
  *   throttled ~150ms, fallback a ActiveSpeakersChanged.
  */
-const SCALE_MIN = 0.35, FADE_START = 5, FADE_END = 7.5;
+const SCALE_MIN = 0.5, FADE_START = 5, FADE_END = 7.5;
 
 function mapScale(distTiles: number): number {
   if (distTiles <= 3) return 1.0;
@@ -259,8 +259,11 @@ export function updateVisuals(sc: SC, scene: any) {
     if (bub) {
       const va = mapVideoAlpha(dist);
       if (va <= 0.02) {
-        // modo foto: burbuja redonda visible con la imagen del avatar
+        // modo foto: burbuja redonda visible con la imagen del avatar;
+        // feedback Tito: la foto necesita ~55% — video mínimo 50%, foto 55%
         bub.style.opacity = "1";
+        const lFar = Math.max(l, 0.55);
+        bub.style.transform = bub.style.transform.replace(/scale\([^)]*\)/, `scale(${lFar.toFixed(3)})`);
         if (p.video) p.video.style.display = "none";
         if (p.bubbleImg) p.bubbleImg.style.display = "block";
       } else {
