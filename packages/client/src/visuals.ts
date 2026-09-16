@@ -117,22 +117,32 @@ export function updateHalos(sc: SC, scene: any) {
   for (const [id, p] of (sc.players as Map<string, any>)) {
     const sp = p.schema;
     if (!sp) continue;
+    const speakers: string[] = (globalThis as any).__grActiveSpeakers || [];
+    const speakingNow = speakers.includes(id) || speakers.includes(String(p.handle || "").toLowerCase());
+    const roleNow = roleColorOf(p);
+    const targetColor0 = speakingNow ? SPEAK_COLOR : roleNow;
     if (!p.roleHalo) {
-      p.roleHalo = scene.add.circle(0, 0, 15, 0x000000, 0);
-      p.roleHalo.setStrokeStyle(2, ROLE_COLOR_DEFAULT, 0);
+      p.roleHalo = scene.add.circle(0, 0, 19, 0x000000, 0);
+      p.roleHalo.setStrokeStyle(3.5, ROLE_COLOR_DEFAULT, 0);
       p.roleHalo.setDepth((p.sprite?.depth ?? 1) - 0.5);
+      // Etiqueta con fondo del color del rol (Tito: que se distinga QUIÉN es
+      // quién de un vistazo — el anillo solo era demasiado sutil).
+      if (p.label) {
+        const lblColor = "#" + targetColor0.toString(16).padStart(6, "0");
+        p.label.setStyle({ backgroundColor: lblColor + "cc" });
+      }
     }
     const speaking = speakSet.has(id) || speakSet.has(String(p.handle || "").toLowerCase());
     const targetColor = speaking ? SPEAK_COLOR : roleColorOf(p);
     // pulso sutil al hablar
     const t = (globalThis as any).__grNow || Date.now();
     const pulse = speaking ? 1 + 0.12 * Math.sin(t / 160) : 1;
-    p.roleHalo.radius = 15 * pulse;
+    p.roleHalo.radius = 19 * pulse;
     p.roleHalo.setPosition(p.worldX, p.worldY + 6);
     p.roleHalo.strokeColor = targetColor;
     // FADE: alpha objetivo (visible solo si rol ≠ normal o está hablando —
     // usuarios normales silenciosos: halo MUY sutil)
-    const targetAlpha = speaking ? 0.95 : (targetColor !== ROLE_COLOR_DEFAULT ? 0.75 : 0.28);
+    const targetAlpha = speaking ? 0.95 : (targetColor !== ROLE_COLOR_DEFAULT ? 0.9 : 0.45);
     p.roleHalo.strokeAlpha = p.roleHalo.strokeAlpha == null ? 0 : p.roleHalo.strokeAlpha + (targetAlpha - p.roleHalo.strokeAlpha) * 0.12;
   }
 }
