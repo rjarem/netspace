@@ -231,10 +231,11 @@ export function updateProximityRings(sc: SC, scene: any) {
     if (id === sc.myId) continue;
     let ring = rings.get(id);
     if (!ring) {
-      ring = scene.add.circle(p.worldX, p.worldY, R, 0x4f7cff, 0);
-      ring.setStrokeStyle(2, 0x4f7cff, 0);
-      ring.setDepth((p.sprite?.depth ?? 1) - 1);
-      rings.set(id, ring);
+      const r2 = scene.add.circle(p.worldX, p.worldY, R, 0x4f7cff, 0);
+      r2.setStrokeStyle(2, 0x4f7cff, 0);
+      r2.setDepth((p.sprite?.depth ?? 1) - 1);
+      rings.set(id, r2);
+      ring = r2;
     }
     if (!ring) continue;
     const d = Math.hypot(p.worldX - me.worldX, p.worldY - me.worldY) / TILE;
