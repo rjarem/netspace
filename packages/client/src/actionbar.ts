@@ -165,7 +165,7 @@ export function installActionBar(sc: SC) {
   exit.style.fontSize = "24px";
   exit.onclick = async () => {
     try { await sc.lkRoom?.disconnect(); } catch { /* */ }
-    try { sc.room?.leave(true); } catch { /* */ }
+    try { await sc.room?.leave(true); } catch { /* */ }
     // Volver a la Antesala limpia (sin invite en la URL)
     location.href = location.origin + "/";
   };

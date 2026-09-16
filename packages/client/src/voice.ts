@@ -8,15 +8,122 @@ type SC = any; // WorldScene (kept loose to avoid circular imports)
 // Chrome tiene límite de ~6 AudioContexts por página — con N usuarios hablando
 // se agotaban y las pistas nuevas quedaban mudas.
 let sharedAudioCtx: AudioContext | null = null;
+let resumeHooksBound = false;
 export function getSharedAudioCtx(): AudioContext {
-  if (!sharedAudioCtx) sharedAudioCtx = new AudioContext();
+  // Fix R1 (auditor, 16-sep): removePlayer CERRABA este ctx compartido en cada
+  // leave/poda de fantasmas — todas las voces morían y getSharedAudioCtx nunca
+  // lo recreaba porque no era null. Ahora: si está closed, se recrea.
+  if (!sharedAudioCtx || sharedAudioCtx.state === "closed") sharedAudioCtx = new AudioContext();
   (window as any).__nsVoiceCtx = sharedAudioCtx; // diag 16-sep
   const ctx = sharedAudioCtx;
   const resume = () => { if (ctx.state === "suspended") ctx.resume().catch(() => {}); };
   resume();
-  window.addEventListener("pointerdown", resume);
-  window.addEventListener("keydown", resume);
+  if (!resumeHooksBound) {
+    resumeHooksBound = true;
+    window.addEventListener("pointerdown", resume);
+    window.addEventListener("keydown", resume);
+    // Fix R5 (auditor): recuperar el ctx al volver el foco/visibilidad
+    document.addEventListener("visibilitychange", resume);
+    window.addEventListener("focus", resume);
+  }
   return ctx;
+}
+
+// Fix R1/R3 (auditor, 16-sep): desmontar el chain de un jugador SIN cerrar el
+// AudioContext compartido. removePlayer y el watchdog lo usan.
+export function teardownAudioChain(sc: SC, p: any) {
+  try { (p as any).__src?.disconnect(); } catch {}
+  try { p.audioNode?.gain?.disconnect(); } catch {}
+  try { p.audioNode?.panner?.disconnect(); } catch {}
+  try { p.audioEl?.remove(); } catch {}
+  (p as any).__src = null;
+  (p as any).__srcTrack = null;
+  p.audioNode = null;
+  p.audioEl = null;
+}
+
+// Fix R2 (auditor, 16-sep): re-ligar la fuente al track VIGENTE usando SIEMPRE
+// new MediaStream([track.mediaStreamTrack]) — track.mediaStream es opcional en
+// el SDK y puede venir vacío (el rebind 749dd89 usaba ese campo).
+export function rebindAudioSource(sc: SC, p: any, track: any): boolean {
+  try {
+    if (!p.audioNode || !track?.mediaStreamTrack) return false;
+    const mst: MediaStreamTrack = track.mediaStreamTrack;
+    if ((p as any).__srcTrack === mst) return true; // ya ligado
+    const old = (p as any).__src;
+    if (old) { try { old.disconnect(); } catch {} }
+    const src = p.audioNode.ctx.createMediaStreamSource(new MediaStream([mst]));
+    src.connect(p.audioNode.gain);
+    (p as any).__src = src;
+    (p as any).__srcTrack = mst;
+    sc.pushDbg("audio-rebind:" + (p.handle || "?"));
+    return true;
+  } catch (e) {
+    sc.pushDbg("audio-rebind-fail:" + (e as Error).message.slice(0, 60));
+    return false;
+  }
+}
+
+// Construir (o reconstruir) el chain WebAudio de un participante remoto.
+function buildAudioChain(sc: SC, p: any, identity: string, track: any) {
+  try {
+    const ctx = getSharedAudioCtx();
+    if (ctx.state === "closed") throw new Error("ctx closed tras recrear"); // no debería pasar
+    p.audioEl?.remove();
+    const keepAlive = document.createElement("audio");
+    keepAlive.muted = true;
+    keepAlive.autoplay = true;
+    document.body.appendChild(keepAlive);
+    try { track.attach(keepAlive); } catch { /* attach optional */ }
+    const mst = (track as any).mediaStreamTrack;
+    const source = mst ? ctx.createMediaStreamSource(new MediaStream([mst])) : ctx.createMediaStreamSource((track as any).mediaStream);
+    (p as any).__src = source;
+    (p as any).__srcTrack = mst || null;
+    const gain = ctx.createGain();
+    const panner = ctx.createStereoPanner();
+    source.connect(gain).connect(panner).connect(ctx.destination);
+    p.audioNode = { ctx, gain, panner };
+    p.audioEl = keepAlive;
+    sc.pushDbg("audio-build:" + identity);
+  } catch (err) {
+    console.warn("[audio] WebAudio failed, falling back to element:", err);
+    const a = document.createElement("audio");
+    a.autoplay = true;
+    document.body.appendChild(a);
+    try { (track as any).attach(a); } catch {}
+    p.audioEl = a;
+    p.audioNode = null;
+  }
+}
+
+// Fix R1+R2+R3 (auditor): WATCHDOG reconciliador — corre ~1 vez/segundo desde
+// updateSpatialAudio. Los eventos de LiveKit quedan como acelerador; la verdad
+// es el estado observado: chain ausente → construir; ligado a track viejo →
+// rebind; ctx suspendido → resume; ctx cerrado → teardown+rebuild sobre ctx nuevo.
+function audioWatchdog(sc: SC) {
+  try {
+    const room = sc.lkRoom;
+    if (!room) return;
+    const ctx = getSharedAudioCtx();
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    for (const rp of room.remoteParticipants.values()) {
+      const p = sc.players.get(rp.identity);
+      if (!p) continue;
+      const pub = [...rp.trackPublications.values()].find((x: any) => x.kind === "audio");
+      const track = pub && pub.isSubscribed ? (pub as any).track : null;
+      if (!track) {
+        // Fix R3: sin track vigente, el chain queda ligado a un stream muerto
+        if (p.audioNode) teardownAudioChain(sc, p);
+        continue;
+      }
+      if (!p.audioNode || p.audioNode.ctx.state === "closed") {
+        teardownAudioChain(sc, p);
+        buildAudioChain(sc, p, rp.identity, track);
+        continue;
+      }
+      rebindAudioSource(sc, p, track);
+    }
+  } catch { /* room no lista */ }
 }
 
 
@@ -133,21 +240,8 @@ export function onRemoteAudio(sc: SC, identity: string, track: any) {
     // Si ya hay cadena para este identity, no tocar nada.
     const existing = sc.players.get(identity);
     if (existing?.audioNode) {
-      // Fix (Tito, 16-sep): al alejarse se des-suscribe (track muere) y al
-      // acercarse llega un track NUEVO — re-ligar la fuente del chain al track
-      // nuevo (conservando gain/panner). Con "skip" el chain quedaba ligado al
-      // stream MUERTO y el remoto quedaba mudo para siempre.
-      try {
-        const ctx = existing.audioNode.ctx;
-        const old = (existing as any).__src;
-        if (old) { try { old.disconnect(); } catch {} }
-        const src = ctx.createMediaStreamSource(track.mediaStream);
-        src.connect(existing.audioNode.gain);
-        (existing as any).__src = src;
-        sc.pushDbg("audio-remote-rebind:" + identity);
-      } catch {
-        sc.pushDbg("audio-remote-rebind-fail:" + identity);
-      }
+      // Evento TrackSubscribed = acelerador; el watchdog es la verdad.
+      rebindAudioSource(sc, existing, track);
       return;
     }
     const p = sc.players.get(identity);
@@ -191,6 +285,11 @@ export function updateSpatialAudio(sc: SC) {
     if (Date.now() - (sc as any).subThrottle > 500) {
       (sc as any).subThrottle = Date.now();
       try { updateSubscriptions(sc); } catch { /* room not ready */ }
+    }
+    // Fix auditor 16-sep: watchdog reconciliador de audio (~1s)
+    if (Date.now() - (sc as any).wdThrottle > 1000) {
+      (sc as any).wdThrottle = Date.now();
+      audioWatchdog(sc);
     }
     // Diag (Tito, 16-sep): estado de voz visible en window.__ns.voiceDiag —
     // ctx de audio, distancia por participante, suscripción y frames de video.

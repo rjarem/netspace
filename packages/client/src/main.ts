@@ -4,7 +4,7 @@ import {
   TILE, APP_VERSION, AUDIO_RADIUS, AUDIO_MAX_RADIUS,
   tileBlocked, drawZone, PlayerUI,
 } from "./constants";
-import { joinVoice, updateVoiceStatus, onRemoteAudio, updateSpatialAudio, updateSubscriptions } from "./voice";
+import { joinVoice, updateVoiceStatus, onRemoteAudio, updateSpatialAudio, updateSubscriptions, teardownAudioChain } from "./voice";
 import { onRemoteVideo, removeRemoteVideo, ensureBubble, showLocalPreview, updateBubbles } from "./bubbles";
 import { renderMinimap, renderUserList } from "./hud";
 import { installActionBar } from "./actionbar";
@@ -472,8 +472,10 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     if (!p) return;
     p.sprite.destroy(); p.label.destroy();
     p.bubble?.remove();
-    if (p.audioNode) { try { p.audioNode.ctx.close(); } catch {} }
-    p.audioEl?.remove();
+    // Fix R1 (auditor, 16-sep): NUNCA cerrar el AudioContext COMPARTIDO aquí —
+    // cada leave/poda de fantasmas mataba TODAS las voces de la página. Solo
+    // desmontar el chain propio de este jugador.
+    teardownAudioChain(this as any, p);
     this.players.delete(id);
   }
 
