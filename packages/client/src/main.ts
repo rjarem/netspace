@@ -8,7 +8,7 @@ import { joinVoice, updateVoiceStatus, onRemoteAudio, updateSpatialAudio, update
 import { onRemoteVideo, removeRemoteVideo, ensureBubble, showLocalPreview, updateBubbles } from "./bubbles";
 import { renderMinimap, renderUserList } from "./hud";
 import { installActionBar } from "./actionbar";
-import { installMapOverlay, updateHalos, updateVisuals } from "./visuals";
+import { installMapOverlay, updateHalos, updateVisuals, updateProximityRings } from "./visuals";
 import { onServerPosition, tick, animateOwnMove } from "./movement";
 import { initControls } from "./controls";
 import { runGreenRoom, type GreenRoomResult } from "./greenroom";
@@ -525,6 +525,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     try { this.renderUserList(); } catch (e) { console.warn("[userlist]", e); }
     try { updateHalos(this, this); } catch (e) { console.warn("[halos]", e); }
     try { updateVisuals(this, this); } catch (e) { console.warn("[visuals]", e); }
+    try { updateProximityRings(this, this); } catch (e) { console.warn("[rings]", e); }
   }
 }
 

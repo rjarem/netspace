@@ -203,7 +203,50 @@ function mapVideoAlpha(distTiles: number): number {
   return Math.max(0, Math.min(1, a));
 }
 
-/** Latencia del halo: lee audioLevel RTP localmente (barato, sin nodos). */
+/** Radios de proximidad con fade (Tito 17-sep: "falda de hawaiana"): el
+ * radio propio SE DESVANECE cuando alguien entra a él (limpia el video) y
+ * cada usuario tiene un anillo sutil que solo se ve a media distancia. */
+const rings = new Map<string, Phaser.GameObjects.Arc>();
+export function updateProximityRings(sc: SC, scene: any) {
+  const me = sc.players.get(sc.myId);
+  if (!me) return;
+  const R = (globalThis as any).__grAudioMaxTiles != null ? (globalThis as any).__grAudioMaxTiles * TILE : 8 * TILE;
+  // nearest otro jugador
+  let near = 99;
+  for (const [id, p] of (sc.players as Map<string, any>)) {
+    if (id === sc.myId) continue;
+    const d = Math.hypot(p.worldX - me.worldX, p.worldY - me.worldY) / TILE;
+    if (d < near) near = d;
+  }
+  // factor: alguien dentro (<3) → casi invisible; nadie cerca → normal
+  const factor = near < 3 ? 0.15 : near < 8 ? 0.55 : 1;
+  const halo = (scene as any).halo as Phaser.GameObjects.Arc | undefined;
+  if (halo) {
+    const sa = halo.strokeAlpha, fa = halo.fillAlpha;
+    halo.setStrokeStyle(halo.lineWidth, 0x4f7cff, sa + (0.35 * factor - sa) * 0.15);
+    halo.setFillStyle(0x4f7cff, fa + (0.05 * factor - fa) * 0.15);
+  }
+  // anillos por usuario: aparecen a media distancia (3→8 tiles), se quitan cerca
+  for (const [id, p] of (sc.players as Map<string, any>)) {
+    if (id === sc.myId) continue;
+    let ring = rings.get(id);
+    if (!ring) {
+      ring = scene.add.circle(p.worldX, p.worldY, R, 0x4f7cff, 0);
+      ring.setStrokeStyle(2, 0x4f7cff, 0);
+      ring.setDepth((p.sprite?.depth ?? 1) - 1);
+      rings.set(id, ring);
+    }
+    if (!ring) continue;
+    const d = Math.hypot(p.worldX - me.worldX, p.worldY - me.worldY) / TILE;
+    const target = d < 3 ? 0 : d < 8 ? 0.18 : 0.08;
+    ring.setPosition(p.worldX, p.worldY);
+    const sa = ring.strokeAlpha;
+    ring.setStrokeStyle(2, 0x4f7cff, sa + (target - sa) * 0.15);
+    if (ring.strokeAlpha < 0.005 && target === 0) ring.setVisible(false); else ring.setVisible(true);
+  }
+  // poda de anillos de jugadores que salieron
+  for (const [id, ring] of [...rings.entries()]) if (!sc.players.has(id)) { ring.destroy(); rings.delete(id); }
+}
 const lastVoiceTs = new Map<string, number>();
 let lastPoll = 0;
 function pollSpeakingLevels(room: any, sc: SC, now: number) {
