@@ -142,13 +142,17 @@ export function updateHalos(sc: SC, scene: any) {
     p.roleHalo.radius = 19 * pulse;
     p.roleHalo.setPosition(p.worldX, p.worldY + 6);
     p.roleHalo.strokeColor = targetColor;
-    // FADE: alpha objetivo (visible solo si rol ≠ normal o está hablando —
-    // usuarios normales silenciosos: halo MUY sutil)
+    // FADE: al ENCENDER (hablar) es INMEDIATO (responsivo, feedback Tito);
+    // al apagarse sí hace fundido suave.
     const targetAlpha = speaking ? 0.95 : (targetColor !== ROLE_COLOR_DEFAULT ? 0.9 : 0.45);
-    p.roleHalo.strokeAlpha = p.roleHalo.strokeAlpha == null ? 0 : p.roleHalo.strokeAlpha + (targetAlpha - p.roleHalo.strokeAlpha) * 0.12;
+    if (speaking) p.roleHalo.strokeAlpha = targetAlpha;
+    else p.roleHalo.strokeAlpha = p.roleHalo.strokeAlpha == null ? 0 : p.roleHalo.strokeAlpha + (targetAlpha - p.roleHalo.strokeAlpha) * 0.2;
     // CAPA HTML (Tito, diagnóstico 17-sep): la burbuja de video/avatar es un
     // div HTML por ENCIMA del canvas — tapa el anillo Phaser. Pintar el rol
     // DIRECTO en la burbuja: borde del color del rol (+ glow verde al hablar).
+    // Además: la burbuja YA trae su propia etiqueta de nombre — apagar la del
+    // canvas para que no se asome detrás de la burbuja (feedback Tito).
+    if (p.label && p.bubble) p.label.setVisible(false); else p.label?.setVisible(true);
     const bub = p.bubble as HTMLDivElement | undefined;
     if (bub) {
       if (!bub.dataset.grRoleStyled) {
