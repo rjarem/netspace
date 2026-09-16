@@ -125,14 +125,14 @@ class WorldScene extends Phaser.Scene {
         const hs = await fetch(server.replace(/^ws/, "http") + "/api/health").then((r) => r.json()).catch(() => null);
         const wId = hs?.worldRoomId;
         if (wId) {
-          room = (await client.joinById(wId, { token: joinToken, isProbe })) as Room<any>;
+          room = (await client.joinById(wId, { token: joinToken, handle, isProbe })) as Room<any>;
           plog("joinById=" + wId + " roomId=" + room.id);
         } else {
-          room = (await client.joinOrCreate("world", { token: joinToken, isProbe })) as Room<any>;
+          room = (await client.joinOrCreate("world", { token: joinToken, handle, isProbe })) as Room<any>;
         }
       } catch (joinErr: any) {
         // la sala nombrada pudo morir entre health y join — fallback clásico
-        room = (await client.joinOrCreate("world", { token: joinToken, isProbe })) as Room<any>;
+        room = (await client.joinOrCreate("world", { token: joinToken, handle, isProbe })) as Room<any>;
       }
       plog("joined roomId=" + room.id);
       // Hallazgo Tito 16-sep (auditor lo adelantó): el canvas heredaba el

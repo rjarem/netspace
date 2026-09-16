@@ -10,14 +10,14 @@ export function inviteRouter() {
             return res.status(401).json({ error: "unauthorized" });
         }
         const { handle, role, hours } = req.body || {};
-        if (!handle)
-            return res.status(400).json({ error: "handle required" });
+        // 16-sep (Tito): handle OPCIONAL — sin handle = invitación de EVENTO
+        // (link genérico para N invitados, cada quien elige su nombre).
         const validRoles = ["admin", "moderator", "speaker", "attendee", "panelist", "dj"];
         const r2 = validRoles.includes(role) ? role : "attendee";
         const exp = Math.floor(Date.now() / 1000) + (Number(hours) || 24) * 3600;
         const secret = process.env.JWT_SECRET || "dev-secret-change-me";
-        const token = await signInviteToken(secret, { handle, role: r2, exp });
-        res.json({ token, role: r2, exp });
+        const token = await signInviteToken(secret, { handle: handle || "", role: r2, exp });
+        res.json({ token, role: r2, exp, event: !handle });
     });
     return r;
 }

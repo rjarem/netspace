@@ -54,6 +54,7 @@ interface MoveMsg { x: number; y: number }
 interface StateMsg { micOn?: boolean; camOn?: boolean }
 interface JoinOpts {
   token: string; // signed JWT {handle, role}
+  handle?: string; // 16-sep: solo usado con invitación de EVENTO (token sin handle)
   isProbe?: boolean; // Fase 5b (criterio 9, auditor): headless gates NUNCA entran a voz
 }
 
@@ -376,9 +377,20 @@ export class WorldRoom extends Room<WorldState> {
     }
     // recordar el hash del token para que mod:kick pueda invalidar el re-join
     this.tokenHashBySession.set(client.sessionId, tokenHash);
+    // 16-sep (Tito): invitación de EVENTO — token SIN handle → el usuario elige
+    // su nombre (el link no está ligado a una persona). Sanitizado + sufijo si
+    // el nombre ya está en la sala. Los invites PERSONALES (con handle) siguen
+    // siendo identidad fija — el auditor puede endurecer esto con email-auth.
+    let handle = claims.handle;
+    if (!handle) {
+      const raw = String(options.handle || "").trim().slice(0, 20) || ("Invitado-" + Math.random().toString(36).slice(2, 6));
+      handle = raw;
+      let n = 2;
+      while (this.findByHandle(handle)) handle = `${raw}-${n++}`;
+    }
     // Fase 5b (criterio 9): isProbe viaja fuera del JWT (flag de sesión del
     // cliente probe), nunca otorga roles ni permisos — solo limita voz.
-    return { ...claims, isProbe: options.isProbe === true } as typeof claims & { isProbe?: boolean };
+    return { ...claims, handle, isProbe: options.isProbe === true } as typeof claims & { handle: string; isProbe?: boolean };
   }
 
   // --- Fase 6 helpers de moderación ---

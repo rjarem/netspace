@@ -81,13 +81,18 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
     // Fix (Tito, 16-sep): el JWT ES la identidad — el server ignora el handle
     // tecleado. Fijar el handle de la invitación (readonly) para que no haya
     // confusión de que todos los que abren el MISMO link comparten nombre.
+    // INVITACIÓN DE EVENTO (sin handle en el JWT): input libre — cada quien
+    // elige su nombre (el server lo asigna con sufijo si está tomado).
     if (urlInvite) {
       try {
         const payload = JSON.parse(atob(urlInvite.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
-        if (payload.handle && handleIn) {
+        if (!payload.handle && handleIn) {
+          hintHandle.textContent = "🎟️ Link de evento — elige tu nombre";
+          hintHandle.style.color = "#6be38a";
+        } else if (payload.handle && handleIn) {
           handleIn.value = payload.handle;
           handleIn.readOnly = true;
-          hintHandle.textContent = "🔒 Handle fijado por la invitación: " + payload.handle + " — pide un link por dispositivo para otro nombre";
+          hintHandle.textContent = "🔒 Handle fijado por la invitación: " + payload.handle;
           hintHandle.style.color = "#6be38a";
         }
       } catch { /* JWT raro — dejar el flujo normal */ }
