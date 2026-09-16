@@ -34,8 +34,8 @@ export function installMapOverlay(sc: SC) {
   const style = document.createElement("style");
   style.textContent = `
 #gr-mapoverlay { position: fixed; right: 10px; bottom: calc(74px + env(safe-area-inset-bottom, 0px));
-  z-index: 75; background: #e8eaee; border: 1px solid #4f7cff; border-radius: 10px;
-  padding: 4px; box-shadow: 0 4px 18px #000a; display: none;
+  z-index: 75; background: #0b0e16; border: 1px solid #4f7cff; border-radius: 8px;
+  padding: 0; box-shadow: 0 4px 18px #000a; display: none;
   opacity: 0; transition: opacity .25s ease; }
 #gr-mapoverlay.gr-open { display: block; }
 #gr-mapoverlay.gr-shown { opacity: 1; }
@@ -52,7 +52,7 @@ export function installMapOverlay(sc: SC) {
   // y AGRANDARSE (Tito: "tan chiquito no se nota"). Subir resolución interna
   // 480×240 (mismo ratio 2:1 del mapa 128×64) para que no se vea pixelado.
   (mm as HTMLCanvasElement).width = 480; (mm as HTMLCanvasElement).height = 240;
-  mm.style.cssText = `position:static;width:min(420px,78vw);height:auto;background:#0b0e16;border:1px solid #2a3350;border-radius:8px;pointer-events:none;`;
+  mm.style.cssText = `position:static;width:min(420px,78vw);height:auto;background:#0b0e16;border:none;border-radius:8px;pointer-events:none;`;
   ov.appendChild(mm); // mover el canvas existente dentro del panel
   document.body.appendChild(ov);
 
@@ -125,8 +125,10 @@ export function updateHalos(sc: SC, scene: any) {
       p.roleHalo = scene.add.circle(0, 0, 19, 0x000000, 0);
       p.roleHalo.setStrokeStyle(3.5, ROLE_COLOR_DEFAULT, 0);
       p.roleHalo.setDepth((p.sprite?.depth ?? 1) - 0.5);
-      // Etiqueta con fondo del color del rol (Tito: que se distinga QUIÉN es
-      // quién de un vistazo — el anillo solo era demasiado sutil).
+      // Etiqueta SIEMPRE encima de avatares/burbujas (Tito: los nombres de
+      // jugadores atrás se recortaban contra el avatar de adelante).
+      p.label?.setDepth(100);
+      // Fondo de la etiqueta del color del rol (se distingue quién es quién).
       if (p.label) {
         const lblColor = "#" + targetColor0.toString(16).padStart(6, "0");
         p.label.setStyle({ backgroundColor: lblColor + "cc" });
