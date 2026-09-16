@@ -144,6 +144,9 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
       const room = new Room({ adaptiveStream: true, dynacast: true });
       // Ciclo 1 UX: speakers del SFU (gratis, compatible con E1) para halos
       import("./visuals").then((v) => v.wireActiveSpeakers(room)).catch(() => {});
+      // Ciclo 2 (aprobado por auditor): exponer room para lectura de
+      // audioLevel RTP — solo lectura, cero mutaciones del pipeline.
+      (window as any).__lkRoom = room;
       // Fix C(ii) (auditor 17-sep): visibilidad de pausa upstream / silencio —
       // antes estos eventos pasaban invisible y B3 era indetectable en campo.
       room.on(RoomEvent.LocalAudioSilenceDetected, () => sc.pushDbg("local-audio-silence-detected"));

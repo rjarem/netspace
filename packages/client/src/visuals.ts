@@ -112,8 +112,8 @@ export function installMapOverlay(sc: SC) {
  * SOLO visual: no toca audio, suscripciones ni bubbles.
  */
 export function updateHalos(sc: SC, scene: any) {
-  const speakers: string[] = (globalThis as any).__grActiveSpeakers || [];
-  const speakSet = new Set(speakers);
+  const now = Date.now();
+  pollSpeakingLevels((globalThis as any).__lkRoom, sc, now);
   for (const [id, p] of (sc.players as Map<string, any>)) {
     const sp = p.schema;
     if (!sp) continue;
@@ -134,7 +134,7 @@ export function updateHalos(sc: SC, scene: any) {
         p.label.setStyle({ backgroundColor: lblColor + "cc" });
       }
     }
-    const speaking = speakSet.has(id) || speakSet.has(String(p.handle || "").toLowerCase());
+    const speaking = isSpeaking(sc, id, now); // audioLevel RTP + fallback SFU
     const targetColor = speaking ? SPEAK_COLOR : roleColorOf(p);
     // pulso sutil al hablar
     const t = (globalThis as any).__grNow || Date.now();
@@ -177,4 +177,95 @@ export function wireActiveSpeakers(room: any) {
       try { (globalThis as any).__grActiveSpeakers = (sp || []).map((s: any) => s.identity); } catch { /* */ }
     });
   } catch { /* */ }
+}
+
+/* ================= CICLO 2 (plan auditor 17-sep) =================
+ * Guardarraíles: SOLO scale/alpha/transform. PROHIBIDO tocar
+ * updateSubscriptions, el corte a 8 tiles, ganancias, movement.ts, schema.
+ * - Escala = map(3→8 tiles, 1.0→0.35), clamp [0.35, 1.0]; self nunca escala.
+ * - alphaVideo = map(5→7.5 tiles, 1→0) — el fade TERMINA a 7.5, antes del
+ *   corte de suscripción a 8 (el corte no se percibe).
+ * - Zonas: fade de alpha por proximidad, 200-300ms simétrico.
+ * - Latencia del halo: audioLevel RTP vía getSynchronizationSources()
+ *   (no analyser, no getStats), umbral 0.03, ataque inmediato, decay 300ms,
+ *   throttled ~150ms, fallback a ActiveSpeakersChanged.
+ */
+const SCALE_MIN = 0.35, FADE_START = 5, FADE_END = 7.5;
+
+function mapScale(distTiles: number): number {
+  if (distTiles <= 3) return 1.0;
+  const s = 1.0 - ((distTiles - 3) / 5) * (1.0 - SCALE_MIN);
+  return Math.max(SCALE_MIN, Math.min(1.0, s));
+}
+function mapVideoAlpha(distTiles: number): number {
+  if (distTiles <= FADE_START) return 1;
+  const a = 1 - (distTiles - FADE_START) / (FADE_END - FADE_START);
+  return Math.max(0, Math.min(1, a));
+}
+
+/** Latencia del halo: lee audioLevel RTP localmente (barato, sin nodos). */
+const lastVoiceTs = new Map<string, number>();
+let lastPoll = 0;
+function pollSpeakingLevels(room: any, sc: SC, now: number) {
+  if (now - lastPoll < 150) return;
+  lastPoll = now;
+  try {
+    for (const part of (room?.remoteParticipants?.values?.() || [])) {
+      const id = part.identity;
+      if (!id || !sc.players.has(id)) continue;
+      const pubs = part.trackPublications?.values?.() || [];
+      for (const pub of pubs) {
+        if (pub.kind !== "audio" || !pub.track) continue;
+        const recv = (pub.track as any).receiver;
+        if (!recv?.getSynchronizationSources) continue;
+        const srcs = recv.getSynchronizationSources();
+        const lv = srcs?.[0]?.audioLevel ?? null;
+        if (lv != null && lv > 0.03) lastVoiceTs.set(id, now); // umbral auditor
+        break;
+      }
+    }
+  } catch { /* fallback silencioso a ActiveSpeakersChanged */ }
+}
+
+function isSpeaking(sc: SC, id: string, now: number): boolean {
+  // ataque inmediato si el RTP lo dice (decay 300ms), fallback SFU speakers
+  if (now - (lastVoiceTs.get(id) || 0) < 300) return true;
+  const sp: string[] = (globalThis as any).__grActiveSpeakers || [];
+  return sp.includes(id);
+}
+
+/** Escalado de avatar/burbuja + fade de video + zonas. LLAMAR CADA FRAME. */
+export function updateVisuals(sc: SC, scene: any) {
+  const now = Date.now();
+  pollSpeakingLevels((globalThis as any).__lkRoom, sc, now);
+  const me = sc.players.get(sc.myId);
+  if (!me) return;
+  for (const [id, p] of (sc.players as Map<string, any>)) {
+    if (id === sc.myId || !me) { p.visScale = 1; continue; } // self nunca escala
+    const dist = Math.hypot(p.worldX - me.worldX, p.worldY - me.worldY) / TILE;
+    // Escala con lerp ~170ms (a 60fps ≈ 0.25)
+    const target = mapScale(dist);
+    p.visScale = (p.visScale ?? 1) + (target - (p.visScale ?? 1)) * 0.25;
+    const l = p.visScale;
+    // Avatar Phaser (rect + cara) — la etiqueta NO escala
+    p.sprite?.setScale?.(l);
+    p.sprite?.faceRef?.setScale?.(l);
+    // Fade del video: termina a 7.5 tiles, antes del corte real a 8
+    const bub = p.bubble as HTMLDivElement | undefined;
+    if (bub) {
+      const va = mapVideoAlpha(dist);
+      bub.style.opacity = String(va);
+      bub.style.transformOrigin = "center";
+    }
+    // Hablando (audioLevel RTP + fallback) — alimenta al halo
+    if (isSpeaking(sc, id, now)) lastVoiceTs.set(id, now);
+  }
+  // Zonas: fade simétrico por proximidad (cerca = llena, lejos = tenue)
+  for (const z of ((scene as any).grZones || []) as any[]) {
+    const d = Math.hypot(z.grCx - me.worldX, z.grCy - me.worldY) / TILE;
+    const target = d <= 6 ? z.grBaseAlpha : z.grBaseAlpha * 0.35;
+    const cur = z.fillAlpha ?? z.grBaseAlpha;
+    const next = cur + (target - cur) * 0.18; // ~250ms
+    z.setFillStyle(z.fillColor, next);
+  }
 }

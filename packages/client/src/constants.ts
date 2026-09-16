@@ -48,6 +48,8 @@ export interface PlayerUI {
   audioEl?: HTMLAudioElement; // muted fallback element for remote audio
   audioNode?: AudioNode;      // Web Audio chain when available
   avatarColor: string;
+  // Ciclo 2: escala visual por proximidad (solo presentación)
+  visScale?: number;
 }
 
 export function drawZone(scene: Phaser.Scene, x: number, y: number, w: number, h: number, label: string, color: number, alpha: number) {
@@ -56,6 +58,13 @@ export function drawZone(scene: Phaser.Scene, x: number, y: number, w: number, h
     w * TILE, h * TILE, color, alpha
   );
   rect.setStrokeStyle(2, color, 0.8);
+  // Ciclo 2 (auditor): registrar zonas para fade por proximidad — solo
+  // alpha visual, la lógica de zonas queda intacta.
+  const zl = (scene as any).grZones as any[] || [];
+  (rect as any).grBaseAlpha = alpha;
+  (rect as any).grCx = rect.x; (rect as any).grCy = rect.y;
+  zl.push(rect);
+  (scene as any).grZones = zl;
   scene.add.text(
     x * TILE + (w * TILE) / 2, y * TILE + 4, label,
     { font: "11px system-ui", color: "#ffffffcc" }

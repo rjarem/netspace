@@ -118,7 +118,9 @@ export function updateBubbles(sc: SC) {
       const sz = Math.round(84 * zoom);
       p.bubble.style.width = sz + "px";
       p.bubble.style.height = sz + "px";
-      p.bubble.style.transform = `translate3d(${sx - sz / 2}px,${sy - sz / 2}px,0)`;
+      // Ciclo 2: escala por proximidad (transform scale — NO multiplicado por zoom)
+      const l = (p as any).visScale ?? 1;
+      p.bubble.style.transform = `translate3d(${sx - sz / 2}px,${sy - sz / 2}px,0) scale(${l.toFixed(3)})`;
       // video visible only when actually streaming
       if (p.video && p.video.srcObject) p.video.style.display = "";
       else if (p.video) p.video.style.display = "none";
