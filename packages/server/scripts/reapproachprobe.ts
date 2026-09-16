@@ -37,7 +37,7 @@ class CDP {
     await new Promise((res, rej) => { this.ws.onopen = res; this.ws.onerror = rej; });
     this.ws.onmessage = (ev) => {
       const m = JSON.parse(String(ev.data));
-      if (m.id && this.pending.has(m.id)) { this.pending.get(m.id)(m); this.pending.delete(m.id); }
+      if (m.id && this.pending.has(m.id)) { const fn = this.pending.get(m.id); this.pending.delete(m.id); fn!(m); }
       else if (m.method) this.events.forEach((f) => f(m));
     };
   }
@@ -187,13 +187,24 @@ async function installMeter(cdp: CDP, sidB: string): Promise<void> {
   console.log("[reappro] installMeter __meter presente:", chk);
 }
 
+const rmsOnce = (cdp: CDP, sidB: string) => evalJS(cdp, sidB, `(() => { const m=window.__meter; if(!m) return -1; const buf=new Float32Array(m.an.fftSize); m.an.getFloatTimeDomainData(buf); let s=0; for(const v of buf) s+=v*v; return Math.sqrt(s/buf.length); })()`);
+
 const rmsB = async (cdp: CDP, sidB: string) => {
   await cdp.send("Target.activateTarget", { targetId: await targetIdOf(cdp, sidB) });
   await sleep(700);
   // re-conectar al gain vigente ANTES de medir (el hook refresca gainRef)
   await evalJS(cdp, sidB, "window.__meterHook && window.__meterHook()");
+  // Muestreo MÁXIMO: el fake device de chrome emite un tono INTERMITENTE
+  // (beeps) — una sola muestra cae en el silencio entre beeps y el gate
+  // media rms=0 espurio. 12 muestras × 180ms ≈ 2.2s.
+  let mx = -1;
+  for (let i = 0; i < 12; i++) {
+    const v = Number(await rmsOnce(cdp, sidB));
+    if (v > mx) mx = v;
+    await sleep(180);
+  }
   return {
-    rms: await evalJS(cdp, sidB, `(() => { const m=window.__meter; if(!m) return -1; const buf=new Float32Array(m.an.fftSize); m.an.getFloatTimeDomainData(buf); let s=0; for(const v of buf) s+=v*v; return Math.sqrt(s/buf.length); })()`),
+    rms: mx,
     err: await evalJS(cdp, sidB, "window.__meter?.err ?? null"),
     ctx: await evalJS(cdp, sidB, "window.__nsVoiceCtx?.state ?? '?'"),
     who: await evalJS(cdp, sidB, "window.__ns?.scene?.players?.get?.(window.__ns?.scene?.myId)?.handle || '??'"),
@@ -209,7 +220,7 @@ const fallaAGuards = async (cdp: CDP, sidB: string) => {
   return await evalJS(cdp, sidB, `(() => {
     const s = window.__ns?.scene; if (!s) return { err: 'no-scene' };
     const remotes = [...(s.lkRoom?.remoteParticipants?.values() || [])];
-    let audioRemotes = 0; const bad: string[] = [];
+    let audioRemotes = 0; const bad = [];
     for (const rp of remotes) {
       const pub = [...rp.trackPublications.values()].find(x => x.kind === 'audio');
       if (!pub || !pub.isSubscribed) continue;
@@ -270,10 +281,8 @@ const fallaAGuards = async (cdp: CDP, sidB: string) => {
     const walkNear = async (): Promise<number> => {
       for (let i = 0; i < 45; i++) {
         await cdp.send("Target.activateTarget", { targetId: await targetIdOf(cdp, sidA_tab) });
-        // COORDENADAS DEL SERVER (schema.x/y), NO sprite.worldX: el sprite puede
-        // estar WRAPPED por vista (render por filas) y A perseguía la copia
-        // visual de B alejándose de la real (hallazgo 17-sep: d crecía 11→89).
-        await evalJS(cdp, sidA_tab, `(() => { const s=window.__ns?.scene; const b=[...s.players.values()].find(q=>q.handle==='ReapproB'); const sp=b?.schema; if(!b||!sp) return 'no-B'; s.target={x:sp.x*48+24, y:sp.y*48+24}; return 'ok'; })()`);
+        // sc.target espera TILES (main.ts:81-84); el schema ya está en tiles.
+        await evalJS(cdp, sidA_tab, `(() => { const s=window.__ns?.scene; const b=[...s.players.values()].find(q=>q.handle==='ReapproB'); const sp=b?.schema; if(!b||!sp) return 'no-B'; s.target={x:Math.round(sp.x), y:Math.round(sp.y)}; return 'ok'; })()`);
         await sleep(3000);
         const pA = await pos(cdp, sidB, "ReapproA");
         const d = pA && pB ? Math.round(Math.hypot(pA.x - pB!.x, pA.y - pB!.y) / TILE) : 999;
@@ -299,8 +308,8 @@ const fallaAGuards = async (cdp: CDP, sidB: string) => {
       process.exit(2);
     }
 
-    // lejos: caminar A a 12 tiles
-    const far = { x: pB!.x + 12 * TILE * (pB!.x > 600 ? -1 : 1), y: pB!.y };
+    // lejos: caminar A a 12 tiles de B — en TILES, dentro del mapa 128×64
+    const far = await evalJS(cdp, sidB, `(() => { const s=window.__ns?.scene; const me=s.players.get(s.myId); const sp=me.schema; return {x: sp.x + 12 * (sp.x > 64 ? -1 : 1), y: sp.y}; })()`);
     await walkWithClient(cdp, sidA_tab, far);
     await sleep(4500);
     const t1 = await rmsB(cdp, sidB);
@@ -311,13 +320,13 @@ const fallaAGuards = async (cdp: CDP, sidB: string) => {
     // completaba: quedaba a 89 tiles, hallazgo del handoff 16-sep)
     for (let i = 0; i < 45; i++) {
       await cdp.send("Target.activateTarget", { targetId: await targetIdOf(cdp, sidA_tab) });
-      await evalJS(cdp, sidA_tab, `(() => { const s=window.__ns?.scene; const b=[...s.players.values()].find(q=>q.handle==='ReapproB'); if(!b) return 'no-B'; s.target={x:b.worldX, y:b.worldY}; return 'ok'; })()`);
+      await evalJS(cdp, sidA_tab, `(() => { const s=window.__ns?.scene; const b=[...s.players.values()].find(q=>q.handle==='ReapproB'); const sp=b?.schema; if(!b||!sp) return 'no-B'; s.target={x:Math.round(sp.x), y:Math.round(sp.y)}; return 'ok'; })()`);
       await sleep(3000);
       const pA2 = await pos(cdp, sidB, "ReapproA");
       const d2 = pA2 && pB ? Math.round(Math.hypot(pA2.x - pB!.x, pA2.y - pB!.y) / TILE) : 999;
       if (d2 <= 3) break;
     }
-    await sleep(3000);
+    await sleep(5000);
     const t2 = await rmsB(cdp, sidB);
     const pAback = await pos(cdp, sidB, "ReapproA");
     const distBack = pAback && pB ? Math.round(Math.hypot(pAback.x - pB.x, pAback.y - pB.y) / TILE) : -1;
