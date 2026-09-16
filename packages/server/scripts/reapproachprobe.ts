@@ -301,8 +301,8 @@ const fallaAGuards = async (cdp: CDP, sidB: string) => {
     const chainInfo = await evalJS(cdp, sidB, `(() => { const s=window.__ns?.scene; const a=[...s.players.values()].find(q=>q.handle==='ReapproA'); if(!a) return 'A-no-en-mundo'; const pub=[...(s.lkRoom?.remoteParticipants.values()||[])].flatMap(p=>[...p.trackPublications.values()]).find(x=>x.kind==='audio'); return 'chain='+!!a.audioNode+' sub='+!!pub?.isSubscribed+' mute='+pub?.track?.isMuted; })()`);
     results.push(`t0-cerca: rms=${Number(t0.rms).toFixed(4)} ctx=${t0.ctx} ${chainInfo} meterErr=${t0.err} dbg=${t0.dbg}`);
     const T0 = Number(t0.rms);
-    if (!(T0 > 0)) {
-      results.push("t0 rms=0 → gate CIEGO (sin tono en el chain ni siquiera cerca). FAIL.");
+    if (!(T0 > 0.001)) {
+      results.push("t0 rms<=FLOOR(0.001) → gate CIEGO (sin tono en el chain ni siquiera cerca). FAIL.");
       console.log("\n=== RESULTADOS reapproachprobe ===");
       results.forEach((r) => console.log(r));
       process.exit(2);
@@ -320,6 +320,14 @@ const fallaAGuards = async (cdp: CDP, sidB: string) => {
     const subFar = await evalJS(cdp, sidB, `(() => { const s=window.__ns?.scene; const pub=[...(s.lkRoom?.remoteParticipants.values()||[])].flatMap(p=>[...p.trackPublications.values()]).find(x=>x.kind==='audio'); return pub?.isSubscribed ?? null; })()`);
     results.push(`t1-lejos: rms=${Number(t1.rms).toFixed(4)} dist=${pAfar && pB ? Math.round(Math.hypot(pAfar.x - pB.x, pAfar.y - pB.y) / TILE) : '?'} ctx=${t1.ctx} audioSub=${subFar} ${subFar === true ? "(E1 OK)" : "(E1 FAIL: des-suscrito)"}`);
 
+    // Criterio v2 (auditor 17-sep, respuesta criterio-t2): comparar contra
+    // SILENCIO (t1), no contra volumen (t0) — el fake device varía 0.003-0.31.
+    // FLOOR=0.001 (3× bajo el beep más débil, sobre silencio digital 0.0000).
+    const FLOOR = 0.001;
+    const T1 = Number(t1.rms);
+    const SILENT_FAR = T1 < Math.max(0.1 * T0, FLOOR);
+    results.push(`criterio: t0=${T0.toFixed(4)} t1=${T1.toFixed(4)} (req < ${Math.max(0.1 * T0, FLOOR).toFixed(4)}) → ${SILENT_FAR ? "silencio-lejos OK" : "FAIL silencio-lejos"}`);
+
     // volver: A regresa junto a B — con re-targeting (walkWithClient simple no
     // completaba: quedaba a 89 tiles, hallazgo del handoff 16-sep)
     for (let i = 0; i < 45; i++) {
@@ -334,9 +342,16 @@ const fallaAGuards = async (cdp: CDP, sidB: string) => {
     const t2 = await rmsB(cdp, sidB);
     const pAback = await pos(cdp, sidB, "ReapproA");
     const distBack = pAback && pB ? Math.round(Math.hypot(pAback.x - pB.x, pAback.y - pB.y) / TILE) : -1;
-    // Criterio CALIBRADO (auditor 17-sep §3): relativo a t0, no absoluto.
-    const RECOVERED = Number(t2.rms) > 0.5 * T0 && distBack <= 4;
-    results.push(`t2-vuelta: rms=${Number(t2.rms).toFixed(4)} (req > ${(0.5 * T0).toFixed(4)}) dist=${distBack} ctx=${t2.ctx} who=${t2.who} dbg=${t2.dbg} → ${RECOVERED ? "PASS audio volvió" : "FAIL audio NO volvió (REPRO del bug)"}`);
+    // Criterio v2: t2 > max(5×t1, FLOOR) — contra silencio de la misma sesión.
+    const RECOVERED = Number(t2.rms) > Math.max(5 * T1, FLOOR) && distBack <= 4;
+    results.push(`t2-vuelta: rms=${Number(t2.rms).toFixed(4)} (req > ${Math.max(5 * T1, FLOOR).toFixed(4)}) dist=${distBack} ctx=${t2.ctx} who=${t2.who} dbg=${t2.dbg} → ${RECOVERED ? "PASS audio volvió" : "FAIL audio NO volvió (REPRO del bug)"}`);
+
+    // Guarda estructural v2 (auditor): a dist≤3 el gain de A debe haber rampado
+    // >0.5 — único mecanismo de silencio que E1 no elimina; inmune a la
+    // varianza de amplitud del tono.
+    const gainGuard = await evalJS(cdp, sidB, `(() => { const s=window.__ns?.scene; const a=[...s.players.values()].find(q=>q.handle==='ReapproA'); const g=a?.audioNode?.gain?.gain?.value; return g ?? null; })()`);
+    const GAIN_OK = typeof gainGuard === "number" && gainGuard > 0.5;
+    results.push(`guarda-gain: gain=${gainGuard} (req >0.5 a dist≤3) → ${GAIN_OK ? "PASS" : "FAIL"}`);
 
     // Guardas anti-Falla-A: keepAlive muted/volume=0 y conteo de <audio>
     const g1 = await fallaAGuards(cdp, sidB);

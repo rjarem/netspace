@@ -145,8 +145,8 @@ async function bytesSent(cdp: CDP, sidA: string): Promise<number | null> {
     const lp = window.__ns?.scene?.lkRoom?.localParticipant;
     const pub = [...(lp?.trackPublications.values()||[])].find(x => x.kind === 'audio');
     if (!pub?.track) return null;
-    try { const st = await pub.track.getSenderStats(); return st.reduce((a,s)=>a+(s.bytes||0),0); }
-    catch (e) { return -1; }
+    try { const st = await pub.track.getSenderStats(); const arr = Array.isArray(st) ? st : [st]; return arr.reduce((a,s)=>a+(s.bytesSent||0),0); }
+    catch (e) { return -1000 + ('' + (e && e.message || e)).slice(0, 120); }
   })()`, true);
 }
 
@@ -173,7 +173,15 @@ async function readRms(cdp: CDP, sidB: string): Promise<number> {
   await cdp.send("Target.activateTarget", { targetId: await targetIdOf(cdp, sidB) });
   await sleep(700);
   await evalJS(cdp, sidB, "window.__meterHook && window.__meterHook()");
-  return evalJS(cdp, sidB, `(() => { const m=window.__meter; if(!m) return -1; const buf=new Float32Array(m.an.fftSize); m.an.getFloatTimeDomainData(buf); let s=0; for(const v of buf) s+=v*v; return Math.sqrt(s/buf.length); })()`);
+  // Muestreo MÁXIMO: el fake device emite beeps intermitentes (misma lección
+  // que reapproachprobe) — una sola muestra cae en silencio.
+  let mx = -1;
+  for (let i = 0; i < 12; i++) {
+    const v = Number(await evalJS(cdp, sidB, `(() => { const m=window.__meter; if(!m) return -1; const buf=new Float32Array(m.an.fftSize); m.an.getFloatTimeDomainData(buf); let s=0; for(const v of buf) s+=v*v; return Math.sqrt(s/buf.length); })()`));
+    if (v > mx) mx = v;
+    await sleep(180);
+  }
+  return mx;
 }
 
 (async () => {
@@ -199,15 +207,15 @@ async function readRms(cdp: CDP, sidB: string): Promise<number> {
     }
     results.push(`setup: A publica + B suscrito+chain = ${ready ? "OK" : "TIMEOUT"}`);
 
-    // caminar A junto a B (B fijo): A usa pathfinding hacia la posición de B
-    const pB = await evalJS(cdp, sidB, `(() => { const s=window.__ns?.scene; const me=s.players.get(s.myId); return {x: me.worldX, y: me.worldY}; })()`);
+    // caminar A junto a B (B fijo): target en TILES (schema), no worldX —
+    // mismo bug de unidades que reapproachprobe (auditor #3).
     await cdp.send("Target.activateTarget", { targetId: await targetIdOf(cdp, sidA) });
     await sleep(500);
-    await evalJS(cdp, sidA, `(() => { const s=window.__ns?.scene; s.target={x:${pB.x}, y:${pB.y}}; return 'ok'; })()`);
+    await evalJS(cdp, sidA, `(() => { const s=window.__ns?.scene; const b=[...s.players.values()].find(q=>q.handle==='E2eB'); const sp=b?.schema; if(!sp) return 'no-B'; s.target={x:Math.round(sp.x), y:Math.round(sp.y)}; return 'ok'; })()`);
     for (let i = 0; i < 60; i++) {
       await sleep(600);
-      const st = await evalJS(cdp, sidA, `(() => { const s=window.__ns?.scene; const me=s.players.get(s.myId); return !s.target && !s.movingTo ? {x:me.worldX,y:me.worldY} : null; })()`);
-      if (st) break;
+      const st = await evalJS(cdp, sidA, `(() => { const s=window.__ns?.scene; const me=s.players.get(s.myId); const b=[...s.players.values()].find(q=>q.handle==='E2eB'); const d=b&&me?Math.hypot(me.worldX-b.worldX, me.worldY-b.worldY)/32:999; return !s.target && !s.movingTo ? {d:Math.round(d)} : null; })()`);
+      if (st) { console.log("[antesala-e2e] A llegó, dist:", st.d); break; }
     }
     await setupMeter(cdp, sidB);
 
