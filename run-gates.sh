@@ -55,6 +55,18 @@ for r in 1 2 3 4 5; do
   RB=$(tail -n +"$BEFORE" "$LOG" | grep "\"event\":\"join\"" | grep "\"handle\":\"gate${r}B\"" | grep -oE '"roomId":"[^"]+"' | head -1)
   if [ -n "$RA" ] && [ "$RA" = "$RB" ]; then
     echo "round $r: A y B en $RA ✓"
+  elif [ -z "$RB" ]; then
+    # B nunca llegó a connect (boot-fail de firefox: 0 probelog) — runner
+    # flaky, NO split de matchmaking. Re-ejecutar ese round una vez.
+    echo "round $r: B no conectó (boot-fail) — reintento..."
+    sleep 2
+    pkill -9 -f firefox 2>/dev/null; sleep 2
+    npx tsx packages/server/scripts/headless-gateC.ts "$r" 14 >/dev/null 2>&1
+    sleep 3
+    RA2=$(tail -n +"$BEFORE" "$LOG" | grep "\"event\":\"join\"" | grep "\"handle\":\"gate${r}A\"" | grep -oE '"roomId":"[^"]+"' | tail -1)
+    RB2=$(tail -n +"$BEFORE" "$LOG" | grep "\"event\":\"join\"" | grep "\"handle\":\"gate${r}B\"" | grep -oE '"roomId":"[^"]+"' | tail -1)
+    if [ -n "$RA2" ] && [ "$RA2" = "$RB2" ]; then echo "round $r: A y B en $RA2 ✓ (tras reintento)"
+    else echo "round $r: A=$RA2 B=$RB2 ✗ (persiste tras reintento)"; C_FAILS=$((C_FAILS+1)); fi
   else
     echo "round $r: A=$RA B=$RB ✗"; C_FAILS=$((C_FAILS+1))
   fi

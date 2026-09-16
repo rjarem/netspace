@@ -166,6 +166,10 @@ export class WorldRoom extends Room {
     }
     onCreate(options) {
         worldRooms.add(this); // Fase 8: registro para POST /api/mod
+        // Fix 16-sep noche: en colyseus 0.16 el autoDispose de define() NO se
+        // aplica (3er arg = opciones de onCreate) — la sala nombrada del boot
+        // moría al quedar vacía y cada join creaba otra (splits del gate C).
+        this.autoDispose = false;
         this.setState(new WorldState());
         // Fase 0.3: self-identification — el server anuncia su build SHA en el state.
         // Env var BUILD_SHA la inyecta el Dockerfile/compose en el deploy.

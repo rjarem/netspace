@@ -11,8 +11,12 @@ const PORT = parseInt(process.env.PORT || "2567");
 
 const app = express();
 // Fase 8: exponer el roomId de la sala nombrada — el cliente entra por ID
-// (matchmake determinista REAL; mata la carrera A/B del gate C).
-app.get("/api/health", (_req, res) => res.json({
+// (matchmake determinista REAL; mata la carrera A/B del gate C). CORS abierto:
+// el fetch del cliente (play.→api.) es cross-origin y SIN esta cabecera el
+// navegador lo bloquea y cae al fallback racy.
+app.get("/api/health", (_req, res) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.json({
   ok: true,
   // Auditor 16-sep: alinear con la sala real (LIVEKIT_ROOM) — el valor
   // hardcodeado "netspace" confundía la verificación de salas por entorno.
@@ -21,7 +25,8 @@ app.get("/api/health", (_req, res) => res.json({
   // Fase 5b (gate-auth): expone el modo auth para que el gate sepa qué esperar.
   // devAuth=true => dev-token sin JWT entra (solo con DEV_NO_AUTH=1).
   devAuth: process.env.DEV_NO_AUTH === "1",
-}));
+  });
+});
 // Fase 3 debugging (auditor-prescrito): los clientes headless ?probe= reportan
 // cada paso de connect() aquí; el log cae a stdout del server (gr-server.log).
 app.get("/api/probelog", (req, res) => {
