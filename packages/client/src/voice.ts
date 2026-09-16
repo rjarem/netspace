@@ -75,6 +75,12 @@ function buildAudioChain(sc: SC, p: any, identity: string, track: any) {
     keepAlive.autoplay = true;
     document.body.appendChild(keepAlive);
     try { track.attach(keepAlive); } catch { /* attach optional */ }
+    // Fix A (auditor 17-sep): attachToElement (SDK Track.ts:414) hace
+    // element.muted = (audioTracks.length === 0) → pisa nuestro muted=true a
+    // false y el track suena a volumen 1.0 por el keepAlive, SIN atenuación
+    // espacial e inmune a las ganancias WebAudio. Re-mute DESPUÉS del attach.
+    keepAlive.muted = true;
+    keepAlive.volume = 0;
     const mst = (track as any).mediaStreamTrack;
     const source = mst ? ctx.createMediaStreamSource(new MediaStream([mst])) : ctx.createMediaStreamSource((track as any).mediaStream);
     (p as any).__src = source;
@@ -133,9 +139,12 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
     sc.lkZone = msg.zoneId;
     try {
       if (sc.lkRoom) { await sc.lkRoom.disconnect(); sc.lkRoom = null; }
-      const { Room, RoomEvent } = await import("livekit-client");
+      const { Room, RoomEvent, TrackEvent } = await import("livekit-client");
       (window as any).__lk = { RoomEvent };
       const room = new Room({ adaptiveStream: true, dynacast: true });
+      // Fix C(ii) (auditor 17-sep): visibilidad de pausa upstream / silencio —
+      // antes estos eventos pasaban invisible y B3 era indetectable en campo.
+      room.on(RoomEvent.LocalAudioSilenceDetected, () => sc.pushDbg("local-audio-silence-detected"));
       room.on(RoomEvent.TrackSubscribed, (track: any, pub: any, participant: any) => {
         if (track.kind === "audio") sc.onRemoteAudio(participant.identity, track);
         else if (track.kind === "video") sc.onRemoteVideo(participant.identity, track);
@@ -176,13 +185,33 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
       // default y entrabas con otra cámara/mic.
       const grStream = (window as any).__greenroom?.micStream as MediaStream | null | undefined;
       if (grStream && grStream.getAudioTracks().length) {
+        // Fix C(i) (auditor 17-sep): publicar un track muerto/deshabilitado es
+        // estrictamente peor que re-capturar — ambos extremos quedan mudos. Si
+        // el track de la Antesala no está vivo, fallback a setMicrophoneEnabled.
+        for (const t of grStream.getAudioTracks()) {
+          if (t.readyState !== "live" || !t.enabled) {
+            sc.pushDbg("mic-track-dead:" + t.readyState);
+            console.warn("[voice] Antesala mic track dead, falling back to setMicrophoneEnabled");
+            grStream.removeTrack(t);
+            break;
+          }
+        }
+      }
+      if (grStream && grStream.getAudioTracks().length) {
         try {
           for (const t of grStream.getAudioTracks()) {
-            await room.localParticipant.publishTrack(t, { source: "microphone" as any });
+            const pub = await room.localParticipant.publishTrack(t, { source: "microphone" as any });
+            // Fix C(ii): UpstreamPaused es evento del TRACK local (no del room).
+            const lt: any = (pub as any).track;
+            if (lt?.on) lt.on(TrackEvent.UpstreamPaused, () => {
+              sc.pushDbg("upstream-paused:" + t.readyState);
+              console.warn("[voice] upstream paused (browser muted the mic track?)");
+            });
           }
           sc.updateVoiceStatus();
         } catch (micErr) {
           console.warn("[voice] mic publish failed:", micErr);
+          sc.pushDbg("mic-publish-fail:" + (micErr as Error).message.slice(0, 80));
         }
       } else {
         try {
@@ -262,6 +291,10 @@ export function onRemoteAudio(sc: SC, identity: string, track: any) {
       keepAlive.autoplay = true;
       document.body.appendChild(keepAlive);
       try { track.attach(keepAlive); } catch { /* attach optional */ }
+      // Fix A (auditor 17-sep): attachToElement pisa muted=true → re-mute
+      // DESPUÉS del attach (ver buildAudioChain para el mecanismo exacto).
+      keepAlive.muted = true;
+      keepAlive.volume = 0;
       const source = ctx.createMediaStreamSource(track.mediaStream);
       (p as any).__src = source;
       const gain = ctx.createGain();
@@ -317,12 +350,16 @@ export function updateSpatialAudio(sc: SC) {
     for (const [id, p] of sc.players) {
       if (id === sc.myId) continue;
       const dist = Phaser.Math.Distance.Between(me.worldX, me.worldY, p.worldX, p.worldY) / TILE;
+      // Fix A coordinación (auditor 17-sep): megáfono/stage = volumen completo
+      // vía el gain WebAudio (el hack del elemento keepAlive fue eliminado).
+      const megaphone = (sc.room?.state as any)?.megaphoneBy || "";
+      const fullVolume = (megaphone && id === megaphone) || p.inStage;
       // Smooth perceptual fade: full volume at ≤2 tiles → silent at 8 tiles.
       // Old curve (1.0 until 5 tiles, 0 at 8) felt binary: voice stays intelligible
       // at 0.3 gain, so users heard "on or off". Earlier start + exponential
       // taper makes distance audible.
       const t = Math.min(1, Math.max(0, (dist - 2) / (AUDIO_MAX_RADIUS - 2)));
-      const vol = Math.pow(1 - t, 1.6); // exponential taper, 1.0 → 0.0
+      const vol = fullVolume ? 1 : Math.pow(1 - t, 1.6); // exponential taper, 1.0 → 0.0
       // Stereo pan: normalized horizontal offset (±1 at the pan range)
       const dx = (p.worldX - me.worldX) / (AUDIO_MAX_RADIUS * TILE);
       const pan = Math.max(-1, Math.min(1, dx));
@@ -362,14 +399,10 @@ export function updateSubscriptions(sc: SC) {
         if (pub.isSubscribed !== want) {
           try { pub.setSubscribed(want); } catch { /* already in desired state */ }
         }
-        // volumen completo para megáfono/inStage (los demás lo maneja el audio
-        // espacial en onRemoteAudio)
-        if (pub.isSubscribed && (isMegaphone || sprite.inStage)) {
-          try {
-            const el = (pub as any).attachedElements?.[0] as HTMLAudioElement | undefined;
-            if (el) el.volume = 1;
-          } catch { /* */ }
-        }
+        // Fix A coordinación (auditor 17-sep): el volumen completo de megáfono/
+        // stage YA NO va por el hack attachedElements[0].volume=1 (ese elemento
+        // ES el keepAlive y con el re-mute quedaría mudo). Ahora updateSpatialAudio
+        // pone la ganancia WebAudio a 1.0 para estos participantes (fullVolume).
       }
     }
   }

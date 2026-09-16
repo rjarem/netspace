@@ -34,6 +34,11 @@ class WorldScene extends Phaser.Scene {
   // de audio/video se reevalúa localmente cada 500ms (updateSpatialAudio) con
   // distancias locales, y el volumen espacial es continuo por frame.
   private subThrottle = 0;
+  // Fix NaN-throttle (auditor+Orchestrator, 17-sep): wdThrottle/diagThrottle sin
+  // inicializar → Date.now()-undefined=NaN → NaN>1000 false SIEMPRE → el watchdog
+  // reconciliador y el voiceDiag NUNCA corrieron (ni prod ni gates).
+  private wdThrottle = 0;
+  private diagThrottle = 0;
   ulLast = 0;
   pollT = 0;
   lkRoom: import("livekit-client").Room | null = null;
