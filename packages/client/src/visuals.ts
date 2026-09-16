@@ -249,10 +249,13 @@ export function updateVisuals(sc: SC, scene: any) {
     const l = p.visScale;
     // Avatar Phaser (rect + cara) — la etiqueta NO escala.
     // Fix (Tito, campo): la cara/foto del canvas es CUADRADA y se veía a
-    // través/atrás de la burbuja cuando esta se hace translúcida con la
-    // distancia — la burbuja HTML es el avatar; ocultar la cara del canvas.
+    // través de la burbuja translúcida → oculta SOLO mientras la burbuja es
+    // visible; cuando el fade la apaga (≥7.5 tiles), la cara vuelve para que
+    // el jugador lejano NO quede como puntito sin avatar.
     p.sprite?.setScale?.(l);
-    if (p.sprite?.faceRef) p.sprite.faceRef.setVisible(!p.bubble);
+    const bub2 = p.bubble as HTMLDivElement | undefined;
+    const farFade = mapVideoAlpha(dist) <= 0.02;
+    if (p.sprite?.faceRef) p.sprite.faceRef.setVisible(!bub2 || farFade);
     // Fade del video: termina a 7.5 tiles, antes del corte real a 8
     const bub = p.bubble as HTMLDivElement | undefined;
     if (bub) {
