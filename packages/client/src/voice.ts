@@ -63,21 +63,49 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
           }
         }
       }
-      // Publish mic audio (browser will prompt for permission the first time)
-      try {
-        await room.localParticipant.setMicrophoneEnabled(true);
-        sc.updateVoiceStatus();
-      } catch (micErr) {
-        console.warn("[voice] mic permission denied or unavailable:", micErr);
+      // Publish mic + camera. Fix (Tito, 16-sep): si la Antesala dejó un stream
+      // capturado con los dispositivos ELEGIDOS, publicamos ESOS tracks — LiveKit
+      // con setMicrophoneEnabled/setCameraEnabled re-capturaba con el dispositivo
+      // default y entrabas con otra cámara/mic.
+      const grStream = (window as any).__greenroom?.micStream as MediaStream | null | undefined;
+      if (grStream && grStream.getAudioTracks().length) {
+        try {
+          for (const t of grStream.getAudioTracks()) {
+            await room.localParticipant.publishTrack(t, { source: "microphone" });
+          }
+          sc.updateVoiceStatus();
+        } catch (micErr) {
+          console.warn("[voice] mic publish failed:", micErr);
+        }
+      } else {
+        try {
+          await room.localParticipant.setMicrophoneEnabled(true);
+          sc.updateVoiceStatus();
+        } catch (micErr) {
+          console.warn("[voice] mic permission denied or unavailable:", micErr);
+        }
       }
       // Publish camera too (only allowed for non-viewer roles; harmless no-op otherwise)
       if (!msg.isViewer) {
-        try {
-          await room.localParticipant.setCameraEnabled(true);
-          sc.pushDbg("cam-ok:" + msg.zoneId);
-        } catch (camErr) {
-          console.warn("[voice] camera permission denied or unavailable:", camErr);
-          sc.pushDbg("cam-fail:" + (camErr as Error).message.slice(0, 120));
+        const camTracks = grStream ? grStream.getVideoTracks() : [];
+        if (camTracks.length) {
+          try {
+            for (const t of camTracks) {
+              await room.localParticipant.publishTrack(t, { source: "camera" });
+            }
+            sc.pushDbg("cam-ok:" + msg.zoneId);
+          } catch (camErr) {
+            console.warn("[voice] camera publish failed:", camErr);
+            sc.pushDbg("cam-fail:" + (camErr as Error).message.slice(0, 120));
+          }
+        } else if (grStream && grStream.getVideoTracks().length === 0) {
+          // sin video en el stream de la Antesala (solo mic) — fallback default
+          try { await room.localParticipant.setCameraEnabled(true); sc.pushDbg("cam-ok:" + msg.zoneId); }
+          catch (camErr) { console.warn("[voice] camera failed:", camErr); sc.pushDbg("cam-fail:" + (camErr as Error).message.slice(0, 120)); }
+        } else if (!grStream) {
+          // sin Antesala (probes, rejoin) — comportamiento clásico
+          try { await room.localParticipant.setCameraEnabled(true); sc.pushDbg("cam-ok:" + msg.zoneId); }
+          catch (camErr) { console.warn("[voice] camera failed:", camErr); sc.pushDbg("cam-fail:" + (camErr as Error).message.slice(0, 120)); }
         }
       }
       console.log("[voice] connected to", msg.zoneId);

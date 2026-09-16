@@ -68,8 +68,17 @@ export function installActionBar(sc: SC) {
     }
     try {
       const room = sc.lkRoom;
-      if (room?.localParticipant) {
-        await room.localParticipant.setMicrophoneEnabled(!micOn);
+      const lp = room?.localParticipant;
+      if (lp) {
+        // Fix (Tito, 16-sep): con el track externo de la Antesala,
+        // setMicrophoneEnabled puede no afectar la publicación — mutear el
+        // track publicado DIRECTAMENTE (feedback-proof).
+        const micPub = [...lp.trackPublications.values()].find((x: any) => x.kind === "audio");
+        if (micPub?.track && typeof micPub.track.setMuted === "function") {
+          await micPub.track.setMuted(micOn); // micOn=true → ahora muted
+        } else {
+          await lp.setMicrophoneEnabled(!micOn);
+        }
       }
       micOn = !micOn;
       micBtn.textContent = micOn ? "🎙️" : "🔇";

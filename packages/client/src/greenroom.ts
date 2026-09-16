@@ -221,7 +221,7 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
       }
       try { cancelAnimationFrame(meterRaf); } catch {}
       try { audioCtx?.close(); } catch {}
-      stopStream();
+      // Fix (Tito, 16-sep): NO stopStream() — el stream vive y se publica en el mundo
       join.style.display = "none";
       resolve({
         handle,
@@ -229,7 +229,10 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
         avatarPhoto: photo,
         camDeviceId: camSel.value || null,
         micDeviceId: micSel.value || null,
-        micStream: null,
+        // Fix (Tito, 16-sep): NO detener el stream — LiveKit re-capturaba con
+        // el dispositivo DEFAULT (ignoraba lo elegido: cámara B en vez de A).
+        // La escena publica ESTOS tracks (voice.ts joinVoice).
+        micStream: stream,
       });
     };
 
