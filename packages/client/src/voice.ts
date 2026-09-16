@@ -133,7 +133,21 @@ export function onRemoteAudio(sc: SC, identity: string, track: any) {
     // Si ya hay cadena para este identity, no tocar nada.
     const existing = sc.players.get(identity);
     if (existing?.audioNode) {
-      sc.pushDbg("audio-remote-skip:" + identity);
+      // Fix (Tito, 16-sep): al alejarse se des-suscribe (track muere) y al
+      // acercarse llega un track NUEVO — re-ligar la fuente del chain al track
+      // nuevo (conservando gain/panner). Con "skip" el chain quedaba ligado al
+      // stream MUERTO y el remoto quedaba mudo para siempre.
+      try {
+        const ctx = existing.audioNode.ctx;
+        const old = (existing as any).__src;
+        if (old) { try { old.disconnect(); } catch {} }
+        const src = ctx.createMediaStreamSource(track.mediaStream);
+        src.connect(existing.audioNode.gain);
+        (existing as any).__src = src;
+        sc.pushDbg("audio-remote-rebind:" + identity);
+      } catch {
+        sc.pushDbg("audio-remote-rebind-fail:" + identity);
+      }
       return;
     }
     const p = sc.players.get(identity);
@@ -155,6 +169,7 @@ export function onRemoteAudio(sc: SC, identity: string, track: any) {
       document.body.appendChild(keepAlive);
       try { track.attach(keepAlive); } catch { /* attach optional */ }
       const source = ctx.createMediaStreamSource(track.mediaStream);
+      (p as any).__src = source;
       const gain = ctx.createGain();
       const panner = ctx.createStereoPanner();
       source.connect(gain).connect(panner).connect(ctx.destination);
