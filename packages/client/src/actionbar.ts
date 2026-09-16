@@ -200,7 +200,7 @@ export function installActionBar(sc: SC) {
     if (document.getElementById("gr-exitconfirm")) return;
     const ov = document.createElement("div");
     ov.id = "gr-exitconfirm";
-    ov.style.cssText = "position:fixed;inset:0;z-index:120;background:#000000b0;display:flex;align-items:center;justify-content:center;";
+    ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:#000000b0;display:flex;align-items:center;justify-content:center;";
     const card = document.createElement("div");
     card.style.cssText = "background:#151a26;border:1px solid #2a3350;border-radius:14px;padding:22px 26px;text-align:center;box-shadow:0 6px 24px #000c;max-width:88vw;";
     card.innerHTML = `<div style="font:600 16px system-ui;color:#fff;margin-bottom:16px;">¿Seguro que quieres salir de la sesión?</div>`;

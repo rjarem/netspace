@@ -247,9 +247,12 @@ export function updateVisuals(sc: SC, scene: any) {
     const target = mapScale(dist);
     p.visScale = (p.visScale ?? 1) + (target - (p.visScale ?? 1)) * 0.25;
     const l = p.visScale;
-    // Avatar Phaser (rect + cara) — la etiqueta NO escala
+    // Avatar Phaser (rect + cara) — la etiqueta NO escala.
+    // Fix (Tito, campo): la cara/foto del canvas es CUADRADA y se veía a
+    // través/atrás de la burbuja cuando esta se hace translúcida con la
+    // distancia — la burbuja HTML es el avatar; ocultar la cara del canvas.
     p.sprite?.setScale?.(l);
-    p.sprite?.faceRef?.setScale?.(l);
+    if (p.sprite?.faceRef) p.sprite.faceRef.setVisible(!p.bubble);
     // Fade del video: termina a 7.5 tiles, antes del corte real a 8
     const bub = p.bubble as HTMLDivElement | undefined;
     if (bub) {
