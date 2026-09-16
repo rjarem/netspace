@@ -68,16 +68,30 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
     // Fase 5b (criterio 2): ?invite=<jwt> en el link pre-llena el código y
     // muestra confirmación — flujo de invitado: abrir link → handle + foto → entrar.
     const urlInvite = new URLSearchParams(location.search).get("invite");
+    const hintHandle = document.getElementById("grHintHandle")!;
     if (urlInvite && inviteIn) {
       inviteIn.value = urlInvite;
       inviteInfo.style.display = "inline";
-      // limpiar la URL para que el JWT no quede en el historial ni en shares
       try { history.replaceState(null, "", location.pathname); } catch {}
     }
-    const hintHandle = document.getElementById("grHintHandle")!;
     const hintPhoto = document.getElementById("grHintPhoto")!;
     const ambient = document.getElementById("grAmbient") as HTMLInputElement;
     const goBtn = document.getElementById("grGo") as HTMLButtonElement;
+
+    // Fix (Tito, 16-sep): el JWT ES la identidad — el server ignora el handle
+    // tecleado. Fijar el handle de la invitación (readonly) para que no haya
+    // confusión de que todos los que abren el MISMO link comparten nombre.
+    if (urlInvite) {
+      try {
+        const payload = JSON.parse(atob(urlInvite.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        if (payload.handle && handleIn) {
+          handleIn.value = payload.handle;
+          handleIn.readOnly = true;
+          hintHandle.textContent = "🔒 Handle fijado por la invitación: " + payload.handle + " — pide un link por dispositivo para otro nombre";
+          hintHandle.style.color = "#6be38a";
+        }
+      } catch { /* JWT raro — dejar el flujo normal */ }
+    }
 
     const refreshHints = () => {
       hintHandle.textContent = handleIn.value.trim() ? "✅ Handle listo" : "⚠️ Falta tu handle";

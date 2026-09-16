@@ -26,6 +26,9 @@ export function onRemoteVideo(sc: SC, identity: string, track: any) {
     if (typeof track.attach === "function" && p.video) {
       track.attach(p.video);
       p.video.play().catch(() => {});
+      // Fix (Tito, 16-sep): si play() no arrancó (videoWidth=0) reintentar —
+      // Chrome a veces necesita un segundo play tras el primer frame.
+      setTimeout(() => { if (p.video && p.video.videoWidth === 0) p.video.play().catch(() => {}); }, 1500);
       const av = p.bubble?.querySelector("img"); if (av) av.style.display = "none";
     }
     sc.pushDbg("video-remote:" + identity);
@@ -62,7 +65,10 @@ export function ensureBubble(sc: SC, p: PlayerUI, identity: string) {
     const v = document.createElement("video");
     v.style.cssText = "width:100%;height:100%;object-fit:cover;" + (isMe ? "transform:scaleX(-1);" : "");
     v.autoplay = true; v.playsInline = true;
-    if (isMe) v.muted = true;
+    // Fix (Tito, 16-sep): video remoto SIN muted → Chrome bloquea autoplay y
+    // la burbuja queda congelada (videoWidth=0). El audio viaja por la cadena
+    // WebAudio separada (voice.ts) — mutear el elemento es seguro y necesario.
+    v.muted = true;
     v.style.display = "none";
     b.appendChild(v);
     // Name tag under the bubble

@@ -10,6 +10,7 @@ type SC = any; // WorldScene (kept loose to avoid circular imports)
 let sharedAudioCtx: AudioContext | null = null;
 export function getSharedAudioCtx(): AudioContext {
   if (!sharedAudioCtx) sharedAudioCtx = new AudioContext();
+  (window as any).__nsVoiceCtx = sharedAudioCtx; // diag 16-sep
   const ctx = sharedAudioCtx;
   const resume = () => { if (ctx.state === "suspended") ctx.resume().catch(() => {}); };
   resume();
@@ -147,6 +148,27 @@ export function updateSpatialAudio(sc: SC) {
     if (Date.now() - (sc as any).subThrottle > 500) {
       (sc as any).subThrottle = Date.now();
       try { updateSubscriptions(sc); } catch { /* room not ready */ }
+    }
+    // Diag (Tito, 16-sep): estado de voz visible en window.__ns.voiceDiag —
+    // ctx de audio, distancia por participante, suscripción y frames de video.
+    if (Date.now() - (sc as any).diagThrottle > 2000) {
+      (sc as any).diagThrottle = Date.now();
+      try {
+        const entries: any[] = [];
+        for (const p of (sc.lkRoom as any).remoteParticipants.values()) {
+          const sprite = sc.players.get(p.identity);
+          const d = sprite ? Phaser.Math.Distance.Between((sc.players.get(sc.myId) as any).worldX, (sc.players.get(sc.myId) as any).worldY, sprite.worldX, sprite.worldY) / TILE : null;
+          const pubs = [...p.trackPublications.values()];
+          entries.push({
+            id: p.identity, dist: d === null ? null : Math.round(d),
+            audio: pubs.find((x: any) => x.kind === "audio")?.isSubscribed,
+            video: pubs.find((x: any) => x.kind === "video")?.isSubscribed,
+            videoW: sprite?.video?.videoWidth ?? null, videoMuted: sprite?.video?.muted,
+            gain: (sprite as any)?.audioNode?.gain?.gain?.value ?? null,
+          });
+        }
+        (window as any).__ns.voiceDiag = { ctx: (window as any).__nsVoiceCtx?.state ?? "n/a", entries };
+      } catch { /* room gone */ }
     }
     const me = sc.players.get(sc.myId);
     if (!me) return;
