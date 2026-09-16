@@ -314,7 +314,11 @@ const fallaAGuards = async (cdp: CDP, sidB: string) => {
     await sleep(4500);
     const t1 = await rmsB(cdp, sidB);
     const pAfar = await pos(cdp, sidB, "ReapproA");
-    results.push(`t1-lejos: rms=${Number(t1.rms).toFixed(4)} dist=${pAfar && pB ? Math.round(Math.hypot(pAfar.x - pB.x, pAfar.y - pB.y) / TILE) : '?'} ctx=${t1.ctx}`);
+    // Guarda E1 (auditor): con audio siempre suscrito, a distancia el audio de
+    // A debe seguir isSubscribed=TRUE (el silencio viene del gain, no de la
+    // suscripción).
+    const subFar = await evalJS(cdp, sidB, `(() => { const s=window.__ns?.scene; const pub=[...(s.lkRoom?.remoteParticipants.values()||[])].flatMap(p=>[...p.trackPublications.values()]).find(x=>x.kind==='audio'); return pub?.isSubscribed ?? null; })()`);
+    results.push(`t1-lejos: rms=${Number(t1.rms).toFixed(4)} dist=${pAfar && pB ? Math.round(Math.hypot(pAfar.x - pB.x, pAfar.y - pB.y) / TILE) : '?'} ctx=${t1.ctx} audioSub=${subFar} ${subFar === true ? "(E1 OK)" : "(E1 FAIL: des-suscrito)"}`);
 
     // volver: A regresa junto a B — con re-targeting (walkWithClient simple no
     // completaba: quedaba a 89 tiles, hallazgo del handoff 16-sep)

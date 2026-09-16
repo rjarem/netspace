@@ -394,8 +394,15 @@ export function updateSubscriptions(sc: SC) {
       if (!sprite) continue;
       const dist = Phaser.Math.Distance.Between(me.worldX, me.worldY, sprite.worldX, sprite.worldY) / TILE;
       const isMegaphone = megaphone && p.identity === megaphone;
-      const want = isMegaphone || sprite.inStage || dist <= AUDIO_MAX_RADIUS;
       for (const pub of p.trackPublications.values()) {
+        // Fix E1 (auditor 17-sep): AUDIO siempre suscrito — la des-suscripción por
+        // distancia cruzaba una frontera de negociación del SFU (setSubscribed
+        // solo manda UpdateSubscription; el re-subscribe puede quedar mudo hasta
+        // un subscriber offer externo: repro del gate t2 rms=0 → t3 recupera con
+        // join/leave de C). El silencio por distancia lo da el gain (medido:
+        // t1 rms=0.0000 con suscripción activa). VIDEO mantiene des-suscripción
+        // (ancho de banda caro); re-evaluar si >50 concurrentes.
+        const want = pub.kind === "audio" ? true : (isMegaphone || sprite.inStage || dist <= AUDIO_MAX_RADIUS);
         if (pub.isSubscribed !== want) {
           try { pub.setSubscribed(want); } catch { /* already in desired state */ }
         }
