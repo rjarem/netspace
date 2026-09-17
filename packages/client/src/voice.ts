@@ -339,37 +339,12 @@ export function onRemoteAudio(sc: SC, identity: string, track: any) {
       setTimeout(() => onRemoteAudio(sc, identity, track), 300);
       return;
     }
-    // Web Audio chain: source → gain (distance falloff) → stereo panner → out.
-    // The track is NOT attached to a playing element (double audio); instead we
-    // mute-attach a hidden element to keep the MediaStream alive in some browsers.
-    try {
-      const ctx = getSharedAudioCtx();
-      // Keep the MediaStream alive: muted hidden element (Chrome mutes WebAudio-only streams
-      // in some versions when no element is attached).
-      const keepAlive = document.createElement("audio");
-      keepAlive.muted = true;
-      keepAlive.autoplay = true;
-      document.body.appendChild(keepAlive);
-      try { track.attach(keepAlive); } catch { /* attach optional */ }
-      // Fix A (auditor 17-sep): attachToElement pisa muted=true → re-mute
-      // DESPUÉS del attach (ver buildAudioChain para el mecanismo exacto).
-      keepAlive.muted = true;
-      keepAlive.volume = 0;
-      const source = ctx.createMediaStreamSource(track.mediaStream);
-      (p as any).__src = source;
-      const gain = ctx.createGain();
-      const panner = ctx.createStereoPanner();
-      source.connect(gain).connect(panner).connect(ctx.destination);
-      p.audioNode = { ctx, gain, panner };
-      p.audioEl = keepAlive; // cleaned up in removePlayer
-    } catch (err) {
-      console.warn("[audio] WebAudio failed, falling back to element:", err);
-      const a = document.createElement("audio");
-      a.autoplay = true;
-      document.body.appendChild(a);
-      track.attach(a);
-      p.audioEl = a;
-    }
+    // Web Audio chain: CICLO 7.3 (auditor-firmado): el cuerpo duplicado
+    // (source → gain → panner → out + keepAlive + fallback a elemento) vive en
+    // buildAudioChain — el constructor compartido que usa el watchdog. Además
+    // del patrón frágil track.mediaStream, el duplicado NO seteaba __srcTrack
+    // (inconsistencia latente con el rebind del watchdog, hallazgo del auditor).
+    buildAudioChain(sc, p, identity, track);
     sc.pushDbg("audio-remote:" + identity);
   }
 
