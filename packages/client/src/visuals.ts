@@ -220,15 +220,20 @@ export function updateProximityRings(sc: SC, scene: any) {
     const d = Math.hypot(p.worldX - me.worldX, p.worldY - me.worldY) / TILE;
     if (d < near) near = d;
   }
-  // factor: alguien dentro (<3) → casi invisible; nadie cerca → normal
-  const factor = near < 3 ? 0.15 : near < 8 ? 0.55 : 1;
+  // Tito 17-sep (comportamiento definido por él): el radio NO crece — tiene
+  // tamaño fijo y hace fade IN cuando alguien se acerca a la frontera de audio
+  // (8 tiles → entra al rango y el radio aparece), fade IN progresivo hasta
+  // estar completo dentro, y fade OUT cuando se alejan. Nadie cerca → sin
+  // radio (adiós falda hawaiana permanente).
+  // factor = proximidad del OTRO usuario a MI frontera (8 tiles).
+  const factor = near >= 8 ? 0 : Math.min(1, (8 - near) / 4); // 8→0, 4→1, dentro→1
   const halo = (scene as any).halo as Phaser.GameObjects.Arc | undefined;
   if (halo) {
     const sa = halo.strokeAlpha, fa = halo.fillAlpha;
     halo.setStrokeStyle(halo.lineWidth, 0x4f7cff, sa + (0.35 * factor - sa) * 0.15);
     halo.setFillStyle(0x4f7cff, fa + (0.05 * factor - fa) * 0.15);
   }
-  // anillos por usuario: aparecen a media distancia (3→8 tiles), se quitan cerca
+  // anillos por usuario: mismo criterio — fade in al cruzar 8 tiles, completo a 4
   for (const [id, p] of (sc.players as Map<string, any>)) {
     if (id === sc.myId) continue;
     let ring = rings.get(id);
@@ -241,7 +246,7 @@ export function updateProximityRings(sc: SC, scene: any) {
     }
     if (!ring) continue;
     const d = Math.hypot(p.worldX - me.worldX, p.worldY - me.worldY) / TILE;
-    const target = d < 3 ? 0 : d < 8 ? 0.18 : 0.08;
+    const target = d >= 8 ? 0 : Math.min(1, (8 - d) / 4) * 0.35;
     ring.setPosition(p.worldX, p.worldY);
     const sa = ring.strokeAlpha;
     ring.setStrokeStyle(2, 0x4f7cff, sa + (target - sa) * 0.15);
