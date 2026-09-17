@@ -43,7 +43,7 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
       </label>
       <input id="grHandle" placeholder="Tu handle" maxlength="20"
         style="padding:10px 16px;border-radius:8px;border:2px solid #ffb347;background:#1a1d27;color:#fff;font-size:16px;width:244px;text-align:center" />
-      <input id="grInvite" placeholder="Código de invitación (opcional)" maxlength="2000"
+      <input id="grInvite" placeholder="Link o código de invitación" maxlength="2000"
         style="padding:8px 14px;border-radius:8px;border:1px solid #333;background:#1a1d27;color:#9aa4bf;font-size:12px;width:244px;text-align:center" />
       <span id="grInviteInfo" style="font-size:12px;color:#6be38a;display:none">✅ Invitación detectada en el link</span>
       <div id="grHints" style="font-size:13px;text-align:center;line-height:1.5">

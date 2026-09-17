@@ -6,6 +6,9 @@ const { Server } = colyseus;
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { WorldRoom, worldRooms } from "./worldRoom.js";
 import { inviteRouter, adminOk } from "./invite.js";
+// Ciclo 6b (auditor-firmado): origen del CLIENTE para data-co del botón
+// "Entrar a la sala" de /admin (mismo criterio que invite.ts).
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "https://play.turedvirtual.vip";
 const PORT = parseInt(process.env.PORT || "2567");
 const app = express();
 // Bloqueante 2 (auditor): trust proxy — en prod req.ip sin esto es la IP del
@@ -29,8 +32,8 @@ const ADMIN_PAGE = `<!doctype html><html lang="es"><head><meta charset="utf-8">
  .row{display:flex;gap:.5rem;margin:.4rem 0;flex-wrap:wrap}
  code{background:#161b22;padding:.2rem .4rem;border-radius:4px}
  #msg{min-height:1.2rem;color:#7cff9e}
-</style></head><body>
-<h1>NetSpace · Admin</h1>
+</style></head><body data-co="${CLIENT_ORIGIN}">
+<h1>NetSpace · Admin <button style="margin-left:10px;padding:6px 14px;cursor:pointer" onclick="window.open(document.body.getAttribute('data-co')||location.origin.replace('api.','play.'),'_blank')">🌐 Entrar a la sala</button></h1>
 <p id="gate"><input id="pw" type="password" placeholder="ADMIN_TOKEN"> <button onclick="unlock()">Entrar</button></p>
 <div id="ui" style="display:none">
  <h2>Generar link de invitación</h2>
@@ -56,7 +59,7 @@ async function mint(){const body={role:document.getElementById(\"role\").value,h
  if(!s.code){msg(\"error shortlink: \"+JSON.stringify(s),true);return}
  const url=location.origin+\"/i/\"+s.code;msg(\"Link listo (\"+j.role+\", exp \"+new Date(j.exp*1000).toLocaleString()+\"): \"+url);
  navigator.clipboard&&navigator.clipboard.writeText(url);list()}
-async function list(){const j=await fetch(\"/api/shortlinks\",{headers:auth()}).then(r=>r.json());
+async function list(){const j=await fetch("/api/shortlinks",{headers:auth()}).then(r=>r.json());
  const t=document.getElementById(\"tbl\");t.innerHTML=\"<tr><th>código</th><th>rol</th><th>expira</th><th>creado por</th><th></th></tr>\";
  for(const l of (j.links||[]).filter(l=>!l.revoked)){const tr=document.createElement('tr');
    // Ciclo 6.1 (auditor): cero innerHTML con datos interpolados — XSS almacenado

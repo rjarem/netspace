@@ -127,7 +127,21 @@ class WorldScene extends Phaser.Scene {
       // hay entrada).
       // Fase 5b (criterio 9): los probes se marcan isProbe — el server les
       // niega voz (canPublish/canSubscribe false) para aislarlos de usuarios reales.
-      const joinToken = invite || btoa(`dev:${handle}`);
+      // CICLO 6b (auditor-firmado): código corto pegado (no JWT) → resolver
+      // vía endpoint antes del join. trim+lowercase ANTES de detectar (pero el
+      // JWT se usa tal cual — lowercase lo corrompería); 6-8 alnum sin puntos
+      // = "parece código". Error idéntico para 404/410 (no señal de qué
+      // códigos existen). Cero cambios a voice/devices/actionbar.
+      let joinInvite = invite ? String(invite).trim() : "";
+      if (joinInvite && /^[a-z0-9]{6,8}$/.test(joinInvite.toLowerCase())) {
+        plog("invite parece código corto → resolve");
+        const rr = await fetch(`${(window as any).__API_HTTP}/api/shortlink/resolve/${encodeURIComponent(joinInvite)}`);
+        if (!rr.ok) throw new Error("invalid-invite");
+        const j: any = await rr.json();
+        joinInvite = String(j.jwt || "");
+        if (!joinInvite) throw new Error("invalid-invite");
+      }
+      const joinToken = joinInvite || btoa(`dev:${handle}`);
       // Fase 8: matchmake determinista REAL — entrar por roomId de la sala
       // nombrada (expuesto en /api/health). Elimina la carrera A/B: dos
       // clientes SIEMPRE caen en la MISMA sala (causa de los splits del gate C).

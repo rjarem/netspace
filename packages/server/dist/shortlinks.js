@@ -24,12 +24,18 @@ export function genCode() {
         s += CROCKFORD[buf[i] % 32];
     return s;
 }
+/** Ciclo 6.1/6b (auditor): sanitización en el CHOKE POINT ÚNICO — todo
+ * createdBy (admin y minteo desde la barra worldRoom:303) pasa por aquí. */
+export function sanitizeCreatedBy(s) {
+    return String(s || "").replace(/[<>&"']/g, "");
+}
 /** Crea un shortlink para un JWT ya firmado. Devuelve el código. */
 export function createShortlink(jwt, exp, createdBy) {
     const links = loadLinks();
     let code = genCode();
     while (links.has(code))
         code = genCode();
+    createdBy = sanitizeCreatedBy(createdBy);
     links.set(code, { jwt, exp, revoked: false, createdAt: Date.now(), createdBy });
     saveLinks(links);
     console.log(`[shortlink] creado code=${code} exp=${exp} by=${createdBy}`);

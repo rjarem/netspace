@@ -76,9 +76,25 @@ export function inviteRouter(): Router {
       catch { return res.status(400).json({ error: "token inválido" }); }
       for (const [k, v] of loadLinks()) if (v.jwt === token) return res.json({ code: k, url: `/i/${k}`, exp });
     }
-    const createdBy = sanitizeCreatedBy(String(req.body?.createdBy || "admin"));
+    const createdBy = String(req.body?.createdBy || "admin"); // sanitizado dentro de createShortlink (choke point único, auditor 6b)
     const code = createShortlink(token, exp, createdBy);
     res.json({ code, url: `/i/${code}`, exp, token });
+  });
+
+  // --- Ciclo 6b (auditor-firmado): resolve de código corto para la Antesala.
+  // Path (no querystring): los códigos son credenciales — fuera de access logs.
+  // Devuelve JSON {jwt, exp} (no 302: el cliente no puede leer Location cross-
+  // origin). CORS restrictivo a CLIENT_ORIGIN. Códigos muertos → 404/410 SIN
+  // jwt. Sin ADMIN_TOKEN: la credencial es el código (igual que /i/:code).
+  r.get("/api/shortlink/resolve/:code", (req: Request, res: Response) => {
+    res.set("Access-Control-Allow-Origin", CLIENT_ORIGIN);
+    res.set("Vary", "Origin");
+    if (!rateLimitIp(req.ip || "unknown")) return res.status(429).json({ error: "too many requests" });
+    const e = loadLinks().get(String(req.params.code).toLowerCase());
+    if (!e) return res.status(404).json({ error: "invalid" });
+    if (e.revoked) return res.status(410).json({ error: "invalid" });
+    if (e.exp && Date.now() / 1000 > e.exp) return res.status(410).json({ error: "invalid" });
+    res.json({ jwt: e.jwt, exp: e.exp });
   });
 
   // Resolver: 302 si vigente, 410 si revocado, 404 si no existe.
