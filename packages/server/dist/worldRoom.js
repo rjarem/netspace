@@ -164,11 +164,21 @@ export class WorldRoom extends Room {
         // Fase 8: poda de fantasmas + H6 (kickedTokens acotado)
         this.pruneGhosts = null;
         this.ghostSeenAt = new Map();
+        // CICLO 5: reportes (memoria de sala)
+        this.reportAt = new Map(); // sessionId → last ts (1/min)
+        this.reportCount = new Map(); // handle lower → contador
         // Ciclo 3: rate-limit de minteo 10/día/handle (memoria)
         this.mintCount = new Map();
         // Fase 5a (escala): broadcastProximity() ELIMINADO — sin O(N²) cada 200ms.
         /** Mint a LiveKit token when zone membership changes (audience ↔ stage). */
         this.lastZoneOf = new Map();
+    }
+    // Jerarquía (auditor, Ciclo 5): nadie toca a su mismo nivel o superior —
+    // un mod no toca a otro mod, admin intocable. Enforceado server-side en
+    // mod:mute / mod:kick / mod:ban (mod:role ya está blindado aparte).
+    static { this.RANK = { attendee: 0, speaker: 0, panelist: 0, dj: 0, moderator: 1, admin: 2 }; }
+    mayTouch(senderRole, targetRole) {
+        return (WorldRoom.RANK[senderRole] ?? 0) > (WorldRoom.RANK[targetRole || "attendee"] ?? 0);
     }
     onCreate(options) {
         worldRooms.add(this); // Fase 8: registro para POST /api/mod
@@ -248,6 +258,8 @@ export class WorldRoom extends Room {
             const target = this.findByHandle(String(msg?.handle || ""));
             if (!target || target.handle === mod.handle)
                 return;
+            if (!this.mayTouch(mod.role, target.role))
+                return; // jerarquía
             target.mutedBy = msg.on ? mod.handle : "";
             if (msg.on)
                 target.micOn = false;
@@ -290,6 +302,9 @@ export class WorldRoom extends Room {
             const mod = this.state.players.get(client.sessionId);
             if (!mod || !isModerationRole(mod.role))
                 return;
+            const target = this.findByHandle(String(msg?.handle || ""));
+            if (target && !this.mayTouch(mod.role, target.role))
+                return; // jerarquía
             this.kickByHandle(client, mod, String(msg?.handle || ""), "kick");
         });
         this.onMessage("mod:ban", (client, msg) => {
@@ -306,6 +321,10 @@ export class WorldRoom extends Room {
             }
             const handle = String(msg?.handle || "");
             if (!handle || handle === mod.handle)
+                return;
+            // jerarquía: ban solo a rango menor
+            const tgtP = this.findByHandle(handle);
+            if (tgtP && !this.mayTouch(mod.role, tgtP.role))
                 return;
             // H3 (auditor): normalizar TAMBIÉN en memoria — saveBans escribe
             // minúsculas pero sin esto el in-memory check "casevictim" no veía el
@@ -325,10 +344,11 @@ export class WorldRoom extends Room {
             const p = this.state.players.get(client.sessionId);
             if (!p)
                 return;
-            const isAdmin = p.role === "admin";
-            const r = isAdmin && typeof msg?.role === "string" && VALID_MINT_ROLES.includes(msg.role) ? msg.role : "attendee";
-            const maxH = isAdmin ? 24 * 30 : 72;
-            const hours = isAdmin ? Math.max(1, Math.min(maxH, Number(msg?.hours) || 72)) : 72;
+            // CICLO 5 (auditor): desde la barra TODOS (incluido admin-por-link) solo
+            // mintean attendee — los links con rol SOLO nacen en la página /admin.
+            // La delegación tiene profundidad 1; la raíz es el ADMIN_TOKEN.
+            const r = "attendee";
+            const hours = 72;
             // rate-limit 10/día por handle (memoria, ventana UTC-day)
             const day = new Date().toISOString().slice(0, 10);
             const key = `${p.handle.toLowerCase()}:${day}`;
@@ -348,6 +368,38 @@ export class WorldRoom extends Room {
                 client.send("invite:minted", { ok: true, token, code, role: r, exp });
             })
                 .catch(() => client.send("invite:minted", { ok: false, error: "mint falló" }));
+        });
+        // CICLO 5 (auditor §4): reportar usuario — cualquier usuario puede, el
+        // notice llega solo a admin/moderator presentes (el attendee NO lo ve).
+        // Rate-limit 1/min por usuario (server-side). Contador por target en
+        // memoria de sala. Sin automatismo — el mod decide con sus herramientas.
+        this.onMessage("report", (client, msg) => {
+            const p = this.state.players.get(client.sessionId);
+            if (!p)
+                return;
+            const now = Date.now();
+            const last = this.reportAt.get(client.sessionId) || 0;
+            if (now - last < 60_000)
+                return; // 1/min
+            const target = this.findByHandle(String(msg?.target || ""));
+            if (!target || target.handle === p.handle)
+                return;
+            this.reportAt.set(client.sessionId, now);
+            const count = (this.reportCount.get(target.handle.toLowerCase()) || 0) + 1;
+            this.reportCount.set(target.handle.toLowerCase(), count);
+            const notice = { type: "report", reporter: p.handle, target: target.handle, reason: String(msg?.reason || ""), count };
+            for (const [sid, pl] of this.state.players) {
+                if (pl.role === "admin" || pl.role === "moderator") {
+                    const c = this.clients.find((x) => x.sessionId === sid);
+                    if (c) {
+                        try {
+                            c.send("mod-notice", notice);
+                        }
+                        catch { /* */ }
+                    }
+                }
+            }
+            console.log(`[report] by=${p.handle} target=${target.handle} count=${count}`);
         });
         // Fase 7: relay de emojis — broadcast a todos (los clientes los renderizan
         // flotando sobre el avatar del emisor). Rate cap 1/s POR USUARIO.

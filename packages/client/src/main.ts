@@ -231,8 +231,15 @@ class WorldScene extends Phaser.Scene {
 
       // Fase 6: moderación — avisos y expulsión
       room.onMessage("mod-notice", (msg: any) => {
+        // CICLO 5: contador de reportes (badge visible solo para mods)
+        if (msg?.type === "report") {
+          const w = window as any;
+          w.__grReportCount = w.__grReportCount || {};
+          w.__grReportCount[String(msg.target || "").toLowerCase()] = msg.count || 0;
+        }
         const st = document.getElementById("status");
         const label: Record<string, string> = {
+          report: `🚩 ${msg.reporter} reportó a ${msg.target}${msg.reason ? `: ${msg.reason}` : ""} (total ${msg.count})`,
           mute: `🙊 ${msg.target} muteado por ${msg.by}`,
           unmute: `🔊 ${msg.target} desmuteado por ${msg.by}`,
           unban: `✅ ${msg.target} desbaneado`,

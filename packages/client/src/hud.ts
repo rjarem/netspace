@@ -123,6 +123,27 @@ export function renderUserList(sc: SC) {
           }
         }
       }
+      // CICLO 5 (auditor §4): reportar — botón 🚩 para TODOS (no mods), con
+      // confirmación para evitar taps accidentales. Enforcement server-side.
+      if (!isMeRow && expanded) {
+        const cnt = ((window as any).__grReportCount?.[full.toLowerCase()] || 0);
+        if (iAmMod && cnt > 0) {
+          const badge = document.createElement("span");
+          badge.style.cssText = "font:bold 10px system-ui;color:#fff;background:#b62324;border-radius:8px;padding:1px 5px;flex:0 0 auto;";
+          badge.textContent = "🚩" + cnt;
+          badge.title = "reportes recibidos (solo mods ven esto)";
+          row.appendChild(badge);
+        } else if (!iAmMod) {
+          const rb = document.createElement("button");
+          rb.textContent = "🚩"; rb.title = "Reportar usuario (lo revisa un moderador)";
+          rb.style.cssText = "font:11px system-ui;padding:3px 7px;border-radius:6px;border:1px solid #e3b341;background:transparent;color:#e3b341;cursor:pointer;flex:0 0 auto;";
+          rb.addEventListener("pointerup", (e) => {
+            e.stopPropagation(); e.preventDefault();
+            if (confirm(`¿Reportar a ${full}?`)) sc.room?.send("report", { target: full });
+          });
+          row.appendChild(rb);
+        }
+      }
       (row as any)._jump = () => {
         try {
           // TELEPORT: move my avatar next to the target user and stay there.

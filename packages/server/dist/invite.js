@@ -32,7 +32,9 @@ export function inviteRouter() {
         // (link genérico para N invitados, cada quien elige su nombre).
         const validRoles = ["admin", "moderator", "speaker", "attendee", "panelist", "dj"];
         const r2 = validRoles.includes(role) ? role : "attendee";
-        const exp = Math.floor(Date.now() / 1000) + (Number(hours) || 24) * 3600;
+        // Ciclo 5 (auditor): TTL configurable, cap 7 días (168h)
+        const hrs = Math.max(1, Math.min(168, Number(hours) || 24));
+        const exp = Math.floor(Date.now() / 1000) + hrs * 3600;
         const secret = process.env.JWT_SECRET || "dev-secret-change-me";
         const token = await signInviteToken(secret, { handle: handle || "", role: r2, exp });
         res.json({ token, role: r2, exp, event: !handle });
@@ -79,6 +81,26 @@ export function inviteRouter() {
         // 302 al cliente con el JWT — cero cambios de cliente (auditor)
         res.set("Location", `${CLIENT_ORIGIN}/?invite=${encodeURIComponent(e.jwt)}`);
         return res.status(302).send();
+    });
+    // --- Ciclo 5 (auditor §3): listado de links activos — SOLO con ADMIN_TOKEN,
+    // sin exponer JWTs. Para la página /admin.
+    r.get("/api/shortlinks", (req, res) => {
+        if (req.headers["x-admin-token"] !== (process.env.ADMIN_TOKEN || "dev-admin")) {
+            return res.status(401).json({ error: "unauthorized" });
+        }
+        const links = loadLinks();
+        const out = [];
+        for (const [code, e] of links) {
+            let role = "attendee";
+            try {
+                const mid = String(e.jwt).split(".")[1];
+                const b = JSON.parse(Buffer.from(mid, "base64url").toString("utf8"));
+                role = String(b.role || "attendee");
+            }
+            catch { /* */ }
+            out.push({ code, role, exp: e.exp, createdBy: String(e.createdBy || ""), revoked: !!e.revoked });
+        }
+        res.json({ links: out });
     });
     // Revocar: admin token O el creador demostrando el JWT original.
     r.post("/api/shortlink/revoke", (req, res) => {

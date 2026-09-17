@@ -14,6 +14,60 @@ const app = express();
 // proxy para TODOS y el límite 10/min se vuelve GLOBAL (429 en el arranque
 // de un evento, el caso de uso exacto).
 app.set("trust proxy", 1);
+
+// --- Ciclo 5 (auditor §3): página /admin — bootstrap del root + generador de
+// links con rol. FUERA del cliente de juego. La contraseña (ADMIN_TOKEN) viaja
+// como header x-admin-token, NUNCA en URL. La delegación tiene profundidad 1:
+// un admin-por-link NO puede entrar aquí (aquí solo el root con ADMIN_TOKEN).
+const ADMIN_PAGE = `<!doctype html><html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>NetSpace · Admin</title>
+<style>
+ body{font-family:system-ui;background:#0d1117;color:#e6edf3;max-width:720px;margin:2rem auto;padding:0 1rem}
+ input,select,button{font-size:1rem;padding:.5rem;border-radius:6px;border:1px solid #30363d;background:#161b22;color:inherit}
+ button{cursor:pointer;background:#238636;border-color:#238636;color:#fff}
+ button.rev{background:#b62324;border-color:#b62324}
+ table{width:100%;border-collapse:collapse;margin-top:1rem}
+ td,th{padding:.4rem;border-bottom:1px solid #21262d;text-align:left;font-size:.9rem}
+ .row{display:flex;gap:.5rem;margin:.4rem 0;flex-wrap:wrap}
+ code{background:#161b22;padding:.2rem .4rem;border-radius:4px}
+ #msg{min-height:1.2rem;color:#7cff9e}
+</style></head><body>
+<h1>NetSpace · Admin</h1>
+<p id="gate"><input id="pw" type="password" placeholder="ADMIN_TOKEN"> <button onclick="unlock()">Entrar</button></p>
+<div id="ui" style="display:none">
+ <h2>Generar link de invitación</h2>
+ <div class="row">Rol: <select id="role"><option value="attendee">usuario</option><option value="moderator">moderador</option><option value="admin">admin (TTL corto)</option></select>
+ Duración (horas): <input id="hours" type="number" value="24" min="1" max="168" style="width:5em">
+ Handle (opcional): <input id="handle" placeholder="vacío = lo escribe el invitado"></div>
+ <div class="row"><button onclick="mint()">Generar link</button> <button onclick="list()">Actualizar lista</button></div>
+ <div id="msg"></div>
+ <h2>Links activos</h2>
+ <table id="tbl"><tr><th>código</th><th>rol</th><th>expira</th><th>creado por</th><th></th></tr></table>
+</div>
+<script>
+let PW="";
+function auth(h){return {\"x-admin-token\":PW,\"Content-Type\":\"application/json\"}}
+async function unlock(){PW=document.getElementById(\"pw\").value;
+ const r=await fetch(\"/api/shortlinks\",{headers:auth()}).then(r=>r.status);
+ if(r===200){document.getElementById(\"gate\").style.display=\"none\";document.getElementById(\"ui\").style.display=\"\";list();}else{msg(\"token inválido\",true)}}
+function msg(t,bad){const m=document.getElementById(\"msg\");m.textContent=t;m.style.color=bad?\"#ff8a80\":\"#7cff9e\"}
+async function mint(){const body={role:document.getElementById(\"role\").value,hours:+document.getElementById(\"hours\").value||24,handle:document.getElementById(\"handle\").value.trim()};
+ const j=await fetch(\"/api/invite\",{method:\"POST\",headers:auth(),body:JSON.stringify(body)}).then(r=>r.json());
+ if(!j.token){msg(\"error: \"+JSON.stringify(j),true);return}
+ const s=await fetch(\"/api/shortlink\",{method:\"POST\",headers:auth(),body:JSON.stringify({token:j.token,role:j.role})}).then(r=>r.json());
+ if(!s.code){msg(\"error shortlink: \"+JSON.stringify(s),true);return}
+ const url=location.origin+\"/i/\"+s.code;msg(\"Link listo (\"+j.role+\", exp \"+new Date(j.exp*1000).toLocaleString()+\"): \"+url);
+ navigator.clipboard&&navigator.clipboard.writeText(url);list()}
+async function list(){const j=await fetch(\"/api/shortlinks\",{headers:auth()}).then(r=>r.json());
+ const t=document.getElementById(\"tbl\");t.innerHTML=\"<tr><th>código</th><th>rol</th><th>expira</th><th>creado por</th><th></th></tr>\";
+ for(const l of (j.links||[]).filter(l=>!l.revoked)){const tr=document.createElement(\"tr\");
+ tr.innerHTML=\"<td><code>\"+l.code+\"</code></td><td>\"+l.role+\"</td><td>\"+new Date(l.exp*1000).toLocaleString()+\"</td><td>\"+l.createdBy+\"</td><td></td>\";
+ const b=document.createElement(\"button\");b.className=\"rev\";b.textContent=\"revocar\";
+ b.onclick=async()=>{await fetch(\"/api/shortlink/revoke\",{method:\"POST\",headers:auth(),body:JSON.stringify({code:l.code})});list()};
+ tr.lastChild.appendChild(b);t.appendChild(tr)}}
+</script></body></html>`;
+app.get("/admin", (_req, res) => { res.type("html").send(ADMIN_PAGE); });
 // Fase 8: exponer el roomId de la sala nombrada — el cliente entra por ID
 // (matchmake determinista REAL; mata la carrera A/B del gate C). CORS abierto:
 // el fetch del cliente (play.→api.) es cross-origin y SIN esta cabecera el
