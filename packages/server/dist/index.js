@@ -21,7 +21,7 @@ app.set("trust proxy", 1);
 // un admin-por-link NO puede entrar aquí (aquí solo el root con ADMIN_TOKEN).
 const ADMIN_PAGE = `<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NetSpace · Admin</title>
+<title>Groove Radius · Panel de Administración</title>
 <style>
  body{font-family:system-ui;background:#0d1117;color:#e6edf3;max-width:720px;margin:2rem auto;padding:0 1rem}
  input,select,button{font-size:1rem;padding:.5rem;border-radius:6px;border:1px solid #30363d;background:#161b22;color:inherit}
@@ -33,16 +33,16 @@ const ADMIN_PAGE = `<!doctype html><html lang="es"><head><meta charset="utf-8">
  code{background:#161b22;padding:.2rem .4rem;border-radius:4px}
  #msg{min-height:1.2rem;color:#7cff9e}
 </style></head><body data-co="${CLIENT_ORIGIN}">
-<h1>NetSpace · Admin <button style="margin-left:10px;padding:6px 14px;cursor:pointer" onclick="window.open(document.body.getAttribute('data-co')||location.origin.replace('api.','play.'),'_blank')">🌐 Entrar a la sala</button></h1>
+<h1>Groove Radius · Panel de Administración <button style="margin-left:10px;padding:6px 14px;cursor:pointer" onclick="window.open(document.body.getAttribute('data-co')||location.origin.replace('api.','play.'),'_blank')">🌐 Entrar a la sala</button></h1>
 <p id="gate"><input id="pw" type="password" placeholder="ADMIN_TOKEN"> <button onclick="unlock()">Entrar</button></p>
 <div id="ui" style="display:none">
- <h2>Generar link de invitación</h2>
+ <h2>Generación de invitaciones</h2>
  <div class="row">Rol: <select id="role"><option value="attendee">usuario</option><option value="moderator">moderador</option><option value="admin">admin (TTL corto)</option></select>
  Duración (horas): <input id="hours" type="number" value="24" min="1" max="168" style="width:5em">
  Handle (opcional): <input id="handle" placeholder="vacío = lo escribe el invitado"></div>
- <div class="row"><button onclick="mint()">Generar link</button> <button onclick="list()">Actualizar lista</button></div>
+ <div class="row"><button onclick="mint()">Generar invitación</button> <button onclick="list()">Actualizar lista</button></div>
  <div id="msg"></div>
- <h2>Links activos</h2>
+ <h2>Invitaciones activas</h2>
  <table id="tbl"><tr><th>código</th><th>rol</th><th>expira</th><th>creado por</th><th></th></tr></table>
 </div>
 <script>
@@ -57,7 +57,7 @@ async function mint(){const body={role:document.getElementById(\"role\").value,h
  if(!j.token){msg(\"error: \"+JSON.stringify(j),true);return}
  const s=await fetch(\"/api/shortlink\",{method:\"POST\",headers:auth(),body:JSON.stringify({token:j.token,role:j.role})}).then(r=>r.json());
  if(!s.code){msg(\"error shortlink: \"+JSON.stringify(s),true);return}
- const url=location.origin+\"/i/\"+s.code;msg(\"Link listo (\"+j.role+\", exp \"+new Date(j.exp*1000).toLocaleString()+\"): \"+url);
+ const url=location.origin+\"/i/\"+s.code;msg(\"Invitación generada (\"+j.role+\", exp \"+new Date(j.exp*1000).toLocaleString()+\"): \"+url);
  navigator.clipboard&&navigator.clipboard.writeText(url);list()}
 async function list(){const j=await fetch("/api/shortlinks",{headers:auth()}).then(r=>r.json());
  const t=document.getElementById(\"tbl\");t.innerHTML=\"<tr><th>código</th><th>rol</th><th>expira</th><th>creado por</th><th></th></tr>\";
