@@ -114,6 +114,13 @@ export function renderUserList(sc: SC) {
         if (myRole === "admin") {
           btn("👢", "#ff8a80", () => sc.room?.send("mod:kick", { handle: full }), "Expulsar (su token no re-entra)");
           btn("⛔", "#ff5252", () => sc.room?.send("mod:ban", { handle: full }), "Ban permanente");
+          // CICLO 4 (auditor): promote/demote en vivo — solo attendee<->moderator.
+          // El server re-verifica sender.role === "admin"; el botón es cosmética.
+          if (targetRole === "attendee") {
+            btn("⭐", "#ffd54f", () => sc.room?.send("mod:role", { handle: full, role: "moderator" }), "Promover a moderador (vive solo esta sesión)");
+          } else if (targetRole === "moderator") {
+            btn("☆", "#90a4ae", () => sc.room?.send("mod:role", { handle: full, role: "attendee" }), "Degradar a usuario (vive solo esta sesión)");
+          }
         }
       }
       (row as any)._jump = () => {

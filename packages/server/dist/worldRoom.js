@@ -262,6 +262,30 @@ export class WorldRoom extends Room {
             });
             this.logMod(client, "mute", target.handle, String(msg?.on));
         });
+        // CICLO 4 (plan auditor): mod:role — promote/demote en vivo.
+        // sender.role === "admin" EXCLUSIVO; solo attendee<->moderator en v1
+        // (admin no se otorga en sala). Sin persistencia (muere con la sesión).
+        // El schema reacciona solo: halos/botones escuchan el cambio de rol.
+        this.onMessage("mod:role", (client, msg) => {
+            const sender = this.state.players.get(client.sessionId);
+            if (!sender || sender.role !== "admin")
+                return; // SOLO admin (no mod)
+            const target = this.findByHandle(String(msg?.handle || ""));
+            if (!target)
+                return;
+            const r = String(msg?.role || "");
+            const targetIsSelf = client.sessionId === [...this.state.players.entries()].find(([, p]) => (p.handle || "").trim().toLowerCase() === String(msg?.handle || "").trim().toLowerCase())?.[0];
+            // solo transición attendee<->moderator; admin no se otorga ni se quita
+            if (r !== "moderator" && r !== "attendee")
+                return;
+            if (target.role !== "attendee" && target.role !== "moderator")
+                return;
+            if (targetIsSelf && r === "attendee")
+                return; // un admin no se degrada a sí mismo
+            target.role = r;
+            this.broadcast("mod-notice", { type: "role", target: target.handle, role: r, by: sender.handle });
+            this.logMod(client, "role", target.handle, r);
+        });
         this.onMessage("mod:kick", (client, msg) => {
             const mod = this.state.players.get(client.sessionId);
             if (!mod || !isModerationRole(mod.role))

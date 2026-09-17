@@ -191,6 +191,8 @@ export function wireActiveSpeakers(room: any) {
  *   throttled ~150ms, fallback a ActiveSpeakersChanged.
  */
 const SCALE_MIN = 0.5, FADE_START = 5, FADE_END = 7.5;
+// CICLO 4 (auditor): histéresis del halo — muestras consecutivas por speaker
+const voiceHyst = new Map<string, { n: number; t: number }>();
 
 function mapScale(distTiles: number): number {
   if (distTiles <= 3) return 1.0;
@@ -264,7 +266,19 @@ function pollSpeakingLevels(room: any, sc: SC, now: number) {
         if (!recv?.getSynchronizationSources) continue;
         const srcs = recv.getSynchronizationSources();
         const lv = srcs?.[0]?.audioLevel ?? null;
-        if (lv != null && lv > 0.03) lastVoiceTs.set(id, now); // umbral auditor
+        // CICLO 4 (auditor): umbral 0.03→0.08 + histéresis de 2 muestras
+        // consecutivas (~300ms) — un pico aislado de ruido ya no dispara el
+        // halo; el habla sostenida enciende casi igual de rápido. Release sin
+        // tocar (decay 300ms inmediato, como antes).
+        if (lv != null && lv > 0.08) {
+          const st = voiceHyst.get(id) || { n: 0, t: 0 };
+          st.n = now - st.t < 400 ? st.n + 1 : 1; // muestras consecutivas
+          st.t = now;
+          voiceHyst.set(id, st);
+          if (st.n >= 2) lastVoiceTs.set(id, now);
+        } else {
+          voiceHyst.delete(id); // muestras no consecutivas — reinicia
+        }
         break;
       }
     }
