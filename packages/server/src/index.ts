@@ -37,24 +37,25 @@ const ADMIN_PAGE = `<!doctype html><html lang="es"><head><meta charset="utf-8">
  code{background:#161b22;padding:.2rem .4rem;border-radius:4px}
  #msg{min-height:1.2rem;color:#7cff9e}
 </style></head><body data-co="${CLIENT_ORIGIN}">
-<h1>Groove Radius · Panel de Administración <button style="margin-left:10px;padding:6px 14px;cursor:pointer" onclick="window.open(document.body.getAttribute('data-co')||location.origin.replace('api.','play.'),'_blank')">🌐 Entrar a la sala</button></h1>
-<p id="gate"><input id="pw" type="password" placeholder="ADMIN_TOKEN"> <button onclick="unlock()">Entrar</button></p>
+<h1>Groove Radius · Panel de Administración <button id="goto" style="display:none;margin-left:10px;padding:6px 14px;cursor:pointer" onclick="window.open(document.body.getAttribute('data-co')||location.origin.replace('api.','play.'),'_blank')">🌐 Entrar a la sala</button></h1>
+<p id="gate"><input id="pw" type="password" placeholder="Token de administración"> <button onclick="unlock()">Desbloquear</button></p>
+<div id="msg" style="min-height:1.2rem"></div>
 <div id="ui" style="display:none">
  <h2>Generación de invitaciones</h2>
  <div class="row">Rol: <select id="role"><option value="attendee">usuario</option><option value="moderator">moderador</option><option value="admin">admin (TTL corto)</option></select>
  Duración (horas): <input id="hours" type="number" value="24" min="1" max="168" style="width:5em">
  Handle (opcional): <input id="handle" placeholder="vacío = lo escribe el invitado"></div>
  <div class="row"><button onclick="mint()">Generar invitación</button> <button onclick="list()">Actualizar lista</button></div>
- <div id="msg"></div>
  <h2>Invitaciones activas</h2>
  <table id="tbl"><tr><th>código</th><th>rol</th><th>expira</th><th>creado por</th><th></th></tr></table>
 </div>
 <script>
 let PW="";
 function auth(h){return {\"x-admin-token\":PW,\"Content-Type\":\"application/json\"}}
-async function unlock(){PW=document.getElementById(\"pw\").value;
- const r=await fetch(\"/api/shortlinks\",{headers:auth()}).then(r=>r.status);
- if(r===200){document.getElementById(\"gate\").style.display=\"none\";document.getElementById(\"ui\").style.display=\"\";list();}else{msg(\"token inválido\",true)}}
+async function unlock(){PW=document.getElementById("pw").value.trim();
+ const r=await fetch("/api/shortlinks",{headers:auth()}).then(r=>r.status);
+ if(r===200){document.getElementById("gate").style.display="none";document.getElementById("ui").style.display="";document.getElementById("goto").style.display="";list();}else{msg("Token inválido — verifica e intenta de nuevo",true)}}
+document.getElementById("pw").addEventListener("keydown",function(e){if(e.key==="Enter")unlock()});
 function msg(t,bad){const m=document.getElementById(\"msg\");m.textContent=t;m.style.color=bad?\"#ff8a80\":\"#7cff9e\"}
 async function mint(){const body={role:document.getElementById(\"role\").value,hours:+document.getElementById(\"hours\").value||24,handle:document.getElementById(\"handle\").value.trim()};
  const j=await fetch(\"/api/invite\",{method:\"POST\",headers:auth(),body:JSON.stringify(body)}).then(r=>r.json());
