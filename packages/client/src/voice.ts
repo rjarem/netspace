@@ -135,10 +135,27 @@ function audioWatchdog(sc: SC) {
 
 export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneId: string; isViewer?: boolean }) {
     if (!msg.token || !msg.url) return;
-    if (sc.lkZone === msg.zoneId && sc.lkRoom) return; // already in this zone
+    // CICLO 7.1 (auditor-firmado): el early-return ahora exige room CONECTADO.
+    // Antes: lkRoom existente en estado disconnected/failed tras un blip →
+    // return silencioso → voz muerta hasta recargar (bug de campo).
+    if (sc.lkZone === msg.zoneId && sc.lkRoom && sc.lkRoom.state === "connected") {
+      sc.lkLastMsg = msg; // 7.2: el rejoin SIEMPRE usa el último token emitido
+      return; // already in this zone, healthy
+    }
+    // Room sano pero en OTRA zona (label desincronizado): alinear el label con
+    // la zona del msg — el room vigente ES el de esa zona (7.1, detectado en gate)
+    if (sc.lkRoom && sc.lkRoom.state === "connected" && msg.zoneId) {
+      // no hay cambio real de zona; solo corregir el label y guardar el msg
+      sc.lkZone = msg.zoneId;
+      sc.lkLastMsg = msg;
+      return;
+    }
+    sc.lkManualDisc = true; // AJUSTE 1 (auditor): el disconnect manual de abajo
+    // dispara RoomEvent.Disconnected — el listener NO debe programar rejoin.
     sc.lkZone = msg.zoneId;
     try {
       if (sc.lkRoom) { await sc.lkRoom.disconnect(); sc.lkRoom = null; }
+      sc.lkManualDisc = false; // el Disconnected del room viejo ya disparó — limpiar AQUÍ, no tras el connect (si el connect falla, un flag vivo taparía un Disconnected real)
       const { Room, RoomEvent, TrackEvent } = await import("livekit-client");
       (window as any).__lk = { RoomEvent };
       const room = new Room({ adaptiveStream: true, dynacast: true });
@@ -150,6 +167,34 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
       // Fix C(ii) (auditor 17-sep): visibilidad de pausa upstream / silencio —
       // antes estos eventos pasaban invisible y B3 era indetectable en campo.
       room.on(RoomEvent.LocalAudioSilenceDetected, () => sc.pushDbg("local-audio-silence-detected"));
+      // CICLO 7.1 (auditor-firmado): self-heal de voz. Reconnecting = solo
+      // diagnóstico (LiveKit auto-reconecta con el token vigente). Disconnected
+      // = auto-rejoin con backoff usando el último msg guardado — SOLO si la
+      // desconexión no fue manual (AJUSTE 1: flag + identidad por closure) y
+      // el room que se cayó ES el vigente.
+      room.on(RoomEvent.Reconnecting, () => sc.pushDbg("voice-reconnecting"));
+      room.on(RoomEvent.Disconnected, () => {
+        const stale = (window as any).__lkRoom !== room; // ya hay room NUEVO
+        if (sc.lkManualDisc || stale) {
+          sc.pushDbg(stale ? "voice-disc-stale" : "voice-disc-manual");
+          return;
+        }
+        sc.lkRoom = null;
+        sc.lkZone = null;
+        sc.pushDbg("voice-disc");
+        const last = sc.lkLastMsg;
+        const tries = ((sc.lkRejoinTries as number) || 0) + 1;
+        sc.lkRejoinTries = tries;
+        if (last && tries <= 3) {
+          setTimeout(() => joinVoice(sc, last), 2000 * tries);
+        } else {
+          // AJUSTE 2 (auditor): agotados los reintentos — NUNCA mudo/sordo sin
+          // señal visible.
+          sc.pushDbg("voice-dead");
+          const st = document.getElementById("status");
+          if (st) st.textContent = "⚠️ Voz perdida — recarga para reintentar";
+        }
+      });
       room.on(RoomEvent.TrackSubscribed, (track: any, pub: any, participant: any) => {
         if (track.kind === "audio") sc.onRemoteAudio(participant.identity, track);
         else if (track.kind === "video") sc.onRemoteVideo(participant.identity, track);
@@ -170,6 +215,9 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
       }
       await room.connect(msg.url, msg.token);
       sc.lkRoom = room;
+      sc.lkLastMsg = { token: msg.token, url: msg.url, zoneId: msg.zoneId, isViewer: msg.isViewer };
+      sc.lkRejoinTries = 0;
+      sc.lkManualDisc = false;
       sc.pushDbg("voice-ok:" + msg.zoneId);
       // If camera was already published (rejoin), attach now
       for (const pub of room.localParticipant.trackPublications.values()) {
