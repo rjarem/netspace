@@ -19,12 +19,15 @@ services:
     restart: unless-stopped
     environment:
       - PORT=2567
+      # ⚠️ DEV ONLY — NUNCA copiar este compose a prod (regla auditor 6.1):
+      # DEV_NO_AUTH=1 anula el auth JWT; secretos son placeholders de dev.
+      # En prod: SIN DEV_NO_AUTH y secretos reales SOLO en el env de Dokploy.
       - DEV_NO_AUTH=1
-      - JWT_SECRET=netspace-dev-secret-change-me
-      - ADMIN_TOKEN=netspace-admin-dev
+      - JWT_SECRET=<CHANGE-ME-DEV-ONLY>
+      - ADMIN_TOKEN=<CHANGE-ME-DEV-ONLY>
       - LIVEKIT_HOST=wss://livekit.turedvirtual.vip
-      - LIVEKIT_API_KEY=devkey
-      - LIVEKIT_API_SECRET=devsecret-change-me
+      - LIVEKIT_API_KEY=<CHANGE-ME-DEV-ONLY>
+      - LIVEKIT_API_SECRET=<CHANGE-ME-DEV-ONLY>
     command: sh -c "apk add --no-cache curl python3 make g++ && curl -sL https://codeload.github.com/rjarem/netspace/tar.gz/02d3616fd4ba66e81cf5aaf7f50577f0ac6ebe55 | tar xz --strip-components=1 && npm install -g pnpm@12 && pnpm install --frozen-lockfile --ignore-scripts --filter @netspace/shared --filter @netspace/server && cd packages/server && node dist/index.js"
     networks:
       - dokploy-network

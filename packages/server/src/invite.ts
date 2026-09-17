@@ -19,15 +19,34 @@ function rateLimitIp(ip: string, limit = 10, windowMs = 60_000): boolean {
 // 302 al CLIENTE (dominio del juego), no al API — env CLIENT_ORIGIN
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "https://play.turedvirtual.vip";
 
+// --- Ciclo 6.1 (auditor): fail-closed + timing-safe, UN solo lugar ---
+// Sin ADMIN_TOKEN en env → NUNCA autoriza (antes: invite.ts caía a
+// "dev-admin" mientras /api/mod caía a ""). timingSafeEqual en ambos
+// caminos para eliminar la señal de timing. Exportado para /api/mod
+// (index.ts) — un solo criterio de autorización en todo el server.
+export function adminOk(req: Request): boolean {
+  const expected = process.env.ADMIN_TOKEN || "";
+  if (!expected) return false; // fail-closed: sin env → NUNCA autoriza
+  const a = Buffer.from(String(req.headers["x-admin-token"] || ""), "utf8");
+  const b = Buffer.from(expected, "utf8");
+  if (a.length !== b.length) {
+    // misma cantidad de trabajo en ambos caminos (timing uniforme)
+    crypto.timingSafeEqual(Buffer.alloc(a.length + b.length, 1), Buffer.alloc(a.length + b.length, 1));
+    return false;
+  }
+  return crypto.timingSafeEqual(a, b);
+}
+
 export function inviteRouter(): Router {
   const r = Router();
   r.use(express.json());
 
+  // Sanitización en origen (auditor 6.1, defensa en profundidad del XSS de
+  // /admin): createdBy es handle libre del body — nunca debe llegar a HTML
+  const sanitizeCreatedBy = (s: string) => s.replace(/[<>&"']/g, "");
+
   r.post("/api/invite", async (req: Request, res: Response) => {
-    const adminToken = req.headers["x-admin-token"];
-    if (adminToken !== (process.env.ADMIN_TOKEN || "dev-admin")) {
-      return res.status(401).json({ error: "unauthorized" });
-    }
+    if (!adminOk(req)) return res.status(401).json({ error: "unauthorized" });
     const { handle, role, hours } = req.body || {};
     // 16-sep (Tito): handle OPCIONAL — sin handle = invitación de EVENTO
     // (link genérico para N invitados, cada quien elige su nombre).
@@ -45,9 +64,7 @@ export function inviteRouter(): Router {
   // Crear (admin token): body {token} JWT ya minteado, o {role, hours} para
   // mintear+encurtir en un paso.
   r.post("/api/shortlink", async (req: Request, res: Response) => {
-    if (req.headers["x-admin-token"] !== (process.env.ADMIN_TOKEN || "dev-admin")) {
-      return res.status(401).json({ error: "unauthorized" });
-    }
+    if (!adminOk(req)) return res.status(401).json({ error: "unauthorized" });
     let token = String(req.body?.token || "");
     let exp = 0;
     if (!token) {
@@ -59,7 +76,8 @@ export function inviteRouter(): Router {
       catch { return res.status(400).json({ error: "token inválido" }); }
       for (const [k, v] of loadLinks()) if (v.jwt === token) return res.json({ code: k, url: `/i/${k}`, exp });
     }
-    const code = createShortlink(token, exp, String(req.body?.createdBy || "admin"));
+    const createdBy = sanitizeCreatedBy(String(req.body?.createdBy || "admin"));
+    const code = createShortlink(token, exp, createdBy);
     res.json({ code, url: `/i/${code}`, exp, token });
   });
 
@@ -78,9 +96,7 @@ export function inviteRouter(): Router {
   // --- Ciclo 5 (auditor §3): listado de links activos — SOLO con ADMIN_TOKEN,
   // sin exponer JWTs. Para la página /admin.
   r.get("/api/shortlinks", (req: Request, res: Response) => {
-    if (req.headers["x-admin-token"] !== (process.env.ADMIN_TOKEN || "dev-admin")) {
-      return res.status(401).json({ error: "unauthorized" });
-    }
+    if (!adminOk(req)) return res.status(401).json({ error: "unauthorized" });
     const links = loadLinks();
     const out: Array<{ code: string; role: string; exp: number; createdBy: string; revoked: boolean }> = [];
     for (const [code, e] of links as Map<string, any>) {
@@ -97,7 +113,7 @@ export function inviteRouter(): Router {
 
   // Revocar: admin token O el creador demostrando el JWT original.
   r.post("/api/shortlink/revoke", (req: Request, res: Response) => {
-    const isAdmin = req.headers["x-admin-token"] === (process.env.ADMIN_TOKEN || "dev-admin");
+    const isAdmin = adminOk(req);
     const code = String(req.body?.code || "").toLowerCase();
     const links = loadLinks();
     const e = links.get(code);

@@ -2,6 +2,7 @@
 import express, { Router } from "express";
 import { signInviteToken } from "./jwt.js";
 import { loadLinks, saveLinks, createShortlink } from "./shortlinks.js";
+import crypto from "node:crypto";
 // === Ciclo 3 (plan auditor 17-sep): links cortos ===
 // 6 chars Crockford base32 sin ambiguos (32⁶ ≈ 10⁹), GET /i/:code → 302 a
 // /?invite=<jwt> (cero cambios de cliente), persistencia patrón bans.json,
@@ -19,14 +20,33 @@ function rateLimitIp(ip, limit = 10, windowMs = 60_000) {
 }
 // 302 al CLIENTE (dominio del juego), no al API — env CLIENT_ORIGIN
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "https://play.turedvirtual.vip";
+// --- Ciclo 6.1 (auditor): fail-closed + timing-safe, UN solo lugar ---
+// Sin ADMIN_TOKEN en env → NUNCA autoriza (antes: invite.ts caía a
+// "dev-admin" mientras /api/mod caía a ""). timingSafeEqual en ambos
+// caminos para eliminar la señal de timing. Exportado para /api/mod
+// (index.ts) — un solo criterio de autorización en todo el server.
+export function adminOk(req) {
+    const expected = process.env.ADMIN_TOKEN || "";
+    if (!expected)
+        return false; // fail-closed: sin env → NUNCA autoriza
+    const a = Buffer.from(String(req.headers["x-admin-token"] || ""), "utf8");
+    const b = Buffer.from(expected, "utf8");
+    if (a.length !== b.length) {
+        // misma cantidad de trabajo en ambos caminos (timing uniforme)
+        crypto.timingSafeEqual(Buffer.alloc(a.length + b.length, 1), Buffer.alloc(a.length + b.length, 1));
+        return false;
+    }
+    return crypto.timingSafeEqual(a, b);
+}
 export function inviteRouter() {
     const r = Router();
     r.use(express.json());
+    // Sanitización en origen (auditor 6.1, defensa en profundidad del XSS de
+    // /admin): createdBy es handle libre del body — nunca debe llegar a HTML
+    const sanitizeCreatedBy = (s) => s.replace(/[<>&"']/g, "");
     r.post("/api/invite", async (req, res) => {
-        const adminToken = req.headers["x-admin-token"];
-        if (adminToken !== (process.env.ADMIN_TOKEN || "dev-admin")) {
+        if (!adminOk(req))
             return res.status(401).json({ error: "unauthorized" });
-        }
         const { handle, role, hours } = req.body || {};
         // 16-sep (Tito): handle OPCIONAL — sin handle = invitación de EVENTO
         // (link genérico para N invitados, cada quien elige su nombre).
@@ -43,9 +63,8 @@ export function inviteRouter() {
     // Crear (admin token): body {token} JWT ya minteado, o {role, hours} para
     // mintear+encurtir en un paso.
     r.post("/api/shortlink", async (req, res) => {
-        if (req.headers["x-admin-token"] !== (process.env.ADMIN_TOKEN || "dev-admin")) {
+        if (!adminOk(req))
             return res.status(401).json({ error: "unauthorized" });
-        }
         let token = String(req.body?.token || "");
         let exp = 0;
         if (!token) {
@@ -64,7 +83,8 @@ export function inviteRouter() {
                 if (v.jwt === token)
                     return res.json({ code: k, url: `/i/${k}`, exp });
         }
-        const code = createShortlink(token, exp, String(req.body?.createdBy || "admin"));
+        const createdBy = sanitizeCreatedBy(String(req.body?.createdBy || "admin"));
+        const code = createShortlink(token, exp, createdBy);
         res.json({ code, url: `/i/${code}`, exp, token });
     });
     // Resolver: 302 si vigente, 410 si revocado, 404 si no existe.
@@ -85,9 +105,8 @@ export function inviteRouter() {
     // --- Ciclo 5 (auditor §3): listado de links activos — SOLO con ADMIN_TOKEN,
     // sin exponer JWTs. Para la página /admin.
     r.get("/api/shortlinks", (req, res) => {
-        if (req.headers["x-admin-token"] !== (process.env.ADMIN_TOKEN || "dev-admin")) {
+        if (!adminOk(req))
             return res.status(401).json({ error: "unauthorized" });
-        }
         const links = loadLinks();
         const out = [];
         for (const [code, e] of links) {
@@ -104,7 +123,7 @@ export function inviteRouter() {
     });
     // Revocar: admin token O el creador demostrando el JWT original.
     r.post("/api/shortlink/revoke", (req, res) => {
-        const isAdmin = req.headers["x-admin-token"] === (process.env.ADMIN_TOKEN || "dev-admin");
+        const isAdmin = adminOk(req);
         const code = String(req.body?.code || "").toLowerCase();
         const links = loadLinks();
         const e = links.get(code);

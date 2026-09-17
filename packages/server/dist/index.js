@@ -5,7 +5,7 @@ import colyseus from "colyseus";
 const { Server } = colyseus;
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { WorldRoom, worldRooms } from "./worldRoom.js";
-import { inviteRouter } from "./invite.js";
+import { inviteRouter, adminOk } from "./invite.js";
 const PORT = parseInt(process.env.PORT || "2567");
 const app = express();
 // Bloqueante 2 (auditor): trust proxy — en prod req.ip sin esto es la IP del
@@ -58,11 +58,18 @@ async function mint(){const body={role:document.getElementById(\"role\").value,h
  navigator.clipboard&&navigator.clipboard.writeText(url);list()}
 async function list(){const j=await fetch(\"/api/shortlinks\",{headers:auth()}).then(r=>r.json());
  const t=document.getElementById(\"tbl\");t.innerHTML=\"<tr><th>código</th><th>rol</th><th>expira</th><th>creado por</th><th></th></tr>\";
- for(const l of (j.links||[]).filter(l=>!l.revoked)){const tr=document.createElement(\"tr\");
- tr.innerHTML=\"<td><code>\"+l.code+\"</code></td><td>\"+l.role+\"</td><td>\"+new Date(l.exp*1000).toLocaleString()+\"</td><td>\"+l.createdBy+\"</td><td></td>\";
- const b=document.createElement(\"button\");b.className=\"rev\";b.textContent=\"revocar\";
- b.onclick=async()=>{await fetch(\"/api/shortlink/revoke\",{method:\"POST\",headers:auth(),body:JSON.stringify({code:l.code})});list()};
- tr.lastChild.appendChild(b);t.appendChild(tr)}}
+ for(const l of (j.links||[]).filter(l=>!l.revoked)){const tr=document.createElement('tr');
+   // Ciclo 6.1 (auditor): cero innerHTML con datos interpolados — XSS almacenado
+   // cerrado (createdBy era handle libre del minteo). Solo createElement+textContent.
+   const mk=(txt)=>{const td=document.createElement('td');td.textContent=String(txt);return td;};
+   tr.appendChild(mk(l.code));
+   const roleTd=mk('');const codeEl=document.createElement('code');codeEl.textContent=l.role;roleTd.appendChild(codeEl);tr.appendChild(roleTd);
+   tr.appendChild(mk(new Date(l.exp*1000).toLocaleString()));
+   tr.appendChild(mk(l.createdBy));
+   const td=document.createElement('td');
+   const b=document.createElement('button');b.className='rev';b.textContent='revocar';
+   b.onclick=async()=>{await fetch('/api/shortlink/revoke',{method:'POST',headers:auth(),body:JSON.stringify({code:l.code})});list()};
+   td.appendChild(b);tr.appendChild(td);t.appendChild(tr)}}
 </script></body></html>`;
 app.get("/admin", (_req, res) => { res.type("html").send(ADMIN_PAGE); });
 // Fase 8: exponer el roomId de la sala nombrada — el cliente entra por ID
@@ -84,7 +91,11 @@ app.get("/api/health", (_req, res) => {
 });
 // Fase 3 debugging (auditor-prescrito): los clientes headless ?probe= reportan
 // cada paso de connect() aquí; el log cae a stdout del server (gr-server.log).
+// Ciclo 6.1 (auditor): tras flag DEBUG_PROBELOG — default OFF (404): sin auth
+// y sin rate-limit era un vector de DoS de logs en prod.
 app.get("/api/probelog", (req, res) => {
+    if (process.env.DEBUG_PROBELOG !== "1")
+        return res.status(404).json({ error: "not found" });
     console.log("[probelog] " + (req.query.m || "").toString().slice(0, 300));
     res.json({ ok: true });
 });
@@ -92,8 +103,9 @@ app.use(inviteRouter());
 // Fase 8 (auditor): POST /api/mod — moderar SIN estar en la sala. Solo
 // x-admin-token. Acciones: mute|unmute|kick|ban|unban|broadcast|grant|revoke.
 app.post("/api/mod", (req, res) => {
-    const adminToken = process.env.ADMIN_TOKEN || "";
-    if (!adminToken || req.headers["x-admin-token"] !== adminToken) {
+    // Ciclo 6.1 (auditor): fail-closed + timing-safe — mismo criterio que
+    // invite.ts (antes este path caía a "" y invite.ts a "dev-admin").
+    if (!adminOk(req)) {
         return res.status(401).json({ error: "unauthorized" });
     }
     const { action, handle, on, text } = req.body || {};
@@ -122,6 +134,12 @@ const gameServer = new Server({
 gameServer.define("world", WorldRoom, { autoDispose: false });
 gameServer.listen(PORT).then(async () => {
     console.log(`[netspace] listening on :${PORT}`);
+    // Ciclo 6.1 (auditor): warning visible si ADMIN_TOKEN no está configurado —
+    // los endpoints admin quedan fail-closed (401 en todo), pero el operador
+    // debe saberlo al boot.
+    if (!process.env.ADMIN_TOKEN) {
+        console.warn("[netspace] ⚠️ ADMIN_TOKEN NO configurado — /api/invite, /api/shortlink*, /api/mod quedan FAIL-CLOSED (401)");
+    }
     // Fase 1.1: crear la sala nombrada al boot (criterio: creada exactamente una vez).
     try {
         const colyseusMod = await import("colyseus");
