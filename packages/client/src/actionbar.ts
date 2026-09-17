@@ -188,6 +188,53 @@ export function installActionBar(sc: SC) {
   }
 
   // --- Salir (rojo, decisión Tito 15-sep) — ÚNICO botón con color de la barra ---
+  // === CICLO 3: botón ✉ invitaciones (mintea por mensaje, overlay con copiar) ===
+  {
+    const invBtn = document.createElement("button");
+    invBtn.title = "Invitar";
+    invBtn.textContent = "✉";
+    invBtn.onclick = () => {
+      if (document.getElementById("gr-invite")) return;
+      const ov = document.createElement("div");
+      ov.id = "gr-invite";
+      ov.style.cssText = "position:fixed;inset:0;z-index:9999;background:#000000b0;display:flex;align-items:center;justify-content:center;";
+      const card = document.createElement("div");
+      card.style.cssText = "background:#151a26;border:1px solid #2a3350;border-radius:14px;padding:22px 26px;text-align:center;box-shadow:0 6px 24px #000c;max-width:88vw;";
+      card.innerHTML = `<div style="font:600 16px system-ui;color:#fff;margin-bottom:12px;">Invitar a NetSpace</div>
+        <div id="gr-inv-status" style="font:13px system-ui;color:#8fa3c8;margin-bottom:14px;">Generando link…</div>
+        <div id="gr-inv-row" style="display:none;gap:8px;justify-content:center;margin-bottom:16px;">
+          <input id="gr-inv-url" readonly value="" style="font:13px system-ui;color:#dfe6f2;background:#0b0e16;border:1px solid #2a3350;border-radius:8px;padding:8px;width:150px;text-align:center;" />
+          <button id="gr-inv-copy" style="font:600 13px system-ui;color:#fff;background:#2563eb;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;">Copiar</button>
+        </div>
+        <div><button id="gr-inv-close" style="font:600 13px system-ui;color:#fff;background:#374151;border:none;border-radius:8px;padding:8px 18px;cursor:pointer;">Cerrar</button></div>`;
+      ov.appendChild(card);
+      document.body.appendChild(ov);
+      const close = () => { ov.remove(); };
+      card.querySelector("#gr-inv-close")!.addEventListener("click", close);
+      ov.addEventListener("click", (e) => { if (e.target === ov) close(); });
+      const room = sc.room;
+      const onMinted = (msg: any) => {
+        if (!card.isConnected) return;
+        const st = card.querySelector("#gr-inv-status") as HTMLElement | null;
+        const row = card.querySelector("#gr-inv-row") as HTMLElement | null;
+        if (!msg?.ok) { if (st) st.textContent = msg?.error || "Error"; return; }
+        // link corto: <API>/i/<code> — el code lo creó el server al mintear
+        const httpBase = String((window as any).__API_HTTP || "").replace(/\/$/, "");
+        const link = msg.code ? `${httpBase}/i/${msg.code}` : `${httpBase}/?invite=${encodeURIComponent(msg.token)}`;
+        const inp = card.querySelector("#gr-inv-url") as HTMLInputElement | null;
+        if (inp) inp.value = link;
+        if (st) st.textContent = "Comparte este link — quien lo abra escribe su nombre:";
+        if (row) row.style.display = "flex";
+        card.querySelector("#gr-inv-copy")!.addEventListener("click", () => {
+          void navigator.clipboard?.writeText(link).catch(() => { inp?.select(); document.execCommand?.("copy"); });
+        });
+      };
+      if (!room) { (card.querySelector("#gr-inv-status") as HTMLElement).textContent = "Sin conexión"; return; }
+      room.onMessage("invite:minted", onMinted);
+      room.send("invite:mint", {});
+    };
+    bar.appendChild(invBtn);
+  }
   const exit = document.createElement("button");
   exit.title = "Salir de la sesión";
   exit.textContent = "🚪";

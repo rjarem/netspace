@@ -111,6 +111,11 @@ class WorldScene extends Phaser.Scene {
       : location.port === "5173"
       ? "ws://localhost:2567"
       : `${proto}://api.${location.hostname.replace(/^play\./, "")}`;
+    // Bloqueante 1 (auditor): serverUrl REVERTIDO — un link crafteado
+    // ?serverUrl=wss://evil.com entregaría el JWT a un server atacante.
+    // El __API_HTTP es HTTP (el overlay arma /i/code con esto) — conversión
+    // explícita ws(s)→http(s).
+    (window as any).__API_HTTP = server.replace(/^ws(s?):\/\//, "http$1://");
     plog("server=" + server);
     const client = new Client(server);
     try {

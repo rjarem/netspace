@@ -8,6 +8,10 @@ import {
   type WorldMap, type UserRole, type Position,
 } from "@netspace/shared";
 import { defaultMap } from "./world.js";
+// Ciclo 3: minteo de invitaciones desde la sala (aprobado por auditor)
+import { signInviteToken } from "./jwt.js";
+import { createShortlink } from "./shortlinks.js";
+const VALID_MINT_ROLES = ["admin", "moderator", "speaker", "attendee", "panelist", "dj"];
 import { mintLiveKitToken, muteParticipantAudio, removeParticipantVoice, ROOM } from "./livekit.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -111,6 +115,8 @@ export class WorldRoom extends Room<WorldState> {
   // Fase 8: poda de fantasmas + H6 (kickedTokens acotado)
   pruneGhosts: ReturnType<typeof setInterval> | null = null;
   ghostSeenAt = new Map<string, number>();
+  // Ciclo 3: rate-limit de minteo 10/día/handle (memoria)
+  mintCount = new Map<string, number>();
 
   onCreate(options: any) {
     worldRooms.add(this); // Fase 8: registro para POST /api/mod
@@ -228,6 +234,39 @@ export class WorldRoom extends Room<WorldState> {
       this.broadcast("mod-notice", { type: "ban", target: handle, by: mod.handle });
       this.logMod(client, "ban", handle);
       this.kickByHandle(client, mod, handle, "ban");
+    });
+
+    // === CICLO 3 (plan auditor 17-sep): minteo por mensaje ===
+    // invite:mint → el server ya sabe quién es client.auth; cero auth nueva.
+    // Usuario y moderador: SOLO attendee (handle vacío — el invitado escribe
+    // su handle en la Antesala, flujo 6baa31). Admin: roles elegibles.
+    // TTL 72h usuario; admin elige (default 72). Límite 10 links/día/handle.
+    this.onMessage("invite:mint", (client, msg: { role?: string; hours?: number }) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      const isAdmin = p.role === "admin";
+      const r = isAdmin && typeof msg?.role === "string" && VALID_MINT_ROLES.includes(msg.role) ? msg.role : "attendee";
+      const maxH = isAdmin ? 24 * 30 : 72;
+      const hours = isAdmin ? Math.max(1, Math.min(maxH, Number(msg?.hours) || 72)) : 72;
+      // rate-limit 10/día por handle (memoria, ventana UTC-day)
+      const day = new Date().toISOString().slice(0, 10);
+      const key = `${p.handle.toLowerCase()}:${day}`;
+      const n = (this.mintCount.get(key) || 0) + 1;
+      if (n > 10) {
+        client.send("invite:minted", { ok: false, error: "límite diario alcanzado (10 links/día)" });
+        return;
+      }
+      this.mintCount.set(key, n);
+      const exp = Math.floor(Date.now() / 1000) + hours * 3600;
+      void signInviteToken(process.env.JWT_SECRET || "dev-secret-change-me", { handle: "", role: r, exp })
+        .then((token) => {
+          // Ciclo 3: CADA minteo crea su link corto (el invitado no ve un JWT
+          // de dos líneas — link de 6 chars, spec auditor)
+          const code = createShortlink(token, exp, p.handle);
+          console.log(`[invite:mint] by=${p.handle} role=${r} exp=${exp} code=${code}`);
+          client.send("invite:minted", { ok: true, token, code, role: r, exp });
+        })
+        .catch(() => client.send("invite:minted", { ok: false, error: "mint falló" }));
     });
 
     // Fase 7: relay de emojis — broadcast a todos (los clientes los renderizan
