@@ -124,6 +124,15 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
           opt.textContent = d.label || (d.kind === "videoinput" ? "Cámara" : "Micrófono");
           (d.kind === "videoinput" ? camSel : d.kind === "audioinput" ? micSel : null)?.appendChild(opt);
         }
+        // CICLO 6: preselección desde localStorage (mismas keys que devices.ts)
+        const preferSaved = (sel: HTMLSelectElement, key: string) => {
+          try {
+            const saved = localStorage.getItem(key) || "";
+            if (saved && Array.from(sel.options).some((o) => o.value === saved)) sel.value = saved;
+          } catch { /* */ }
+        };
+        preferSaved(camSel, "gr-device-cam");
+        preferSaved(micSel, "gr-device-mic");
       }).catch(() => {});
     };
 

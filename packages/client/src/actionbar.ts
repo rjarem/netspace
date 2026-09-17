@@ -6,6 +6,7 @@
 // - Botón "Salir" (rojo) — decisión Tito 15-sep: salida limpia de la sesión.
 // Barra fija abajo-centro, tap targets ≥44px, safe-area-inset para Android/iOS.
 type SC = any;
+import { setCamera, initialCameraOn, openSettings } from "./devices";
 
 const CSS = `
 @keyframes grEmojiFloat {
@@ -100,6 +101,50 @@ export function installActionBar(sc: SC) {
     } catch (e) { console.warn("[actionbar] mic toggle:", e); }
   };
   bar.appendChild(micBtn);
+
+  // --- CICLO 6: toggle de cámara (📷) — paridad con mic. Lógica en devices.ts
+  // (regla auditor: devices.ts concentra todo; voice.ts intocado). Default ON
+  // (Tito 18-sep) — joinVoice ya auto-publica la cámara.
+  const { setCamera: setCam, initialCameraOn: initCam } = { setCamera, initialCameraOn };
+  let camOn = initCam(sc);
+  const camBtn = document.createElement("button");
+  camBtn.className = "gr-mic-on"; // mismo estilo glow/apagado
+  camBtn.title = "Cámara on/off";
+  camBtn.textContent = "📷";
+  const syncCamBtn = () => { camBtn.textContent = camOn ? "📷" : "🚫"; camBtn.className = camOn ? "gr-mic-on" : "gr-mic-off"; };
+  syncCamBtn();
+  camBtn.onclick = async () => {
+    const res = await setCam(sc, !camOn);
+    if (!res.ok) console.warn("[cam-toggle]", JSON.stringify(res));
+    if (res.ok) { camOn = !camOn; }
+    syncCamBtn();
+    const st = document.getElementById("status");
+    if (st) st.textContent = res.ok ? (camOn ? "📷 Cámara encendida" : "🚫 Cámara apagada") : (res.note || "No se pudo cambiar la cámara");
+  };
+  bar.appendChild(camBtn);
+  // sync del estado público: joinVoice auto-publicó la cámara (default ON) — el
+    // schema arranca camOn=false. Race fix: re-enviamos el sync idempotente
+    // durante los primeros segundos (el primero puede perderse mientras la
+    // sala termina de registrar al jugador).
+    if (camOn) {
+      let camSyncTries = 0;
+      const camSync = setInterval(() => {
+        try {
+          if (!sc.room) { clearInterval(camSync); return; }
+          const me = sc.players.get(sc.myId);
+          if (me) me.camOn = camOn;
+          sc.room.send("state", { camOn });
+          if (++camSyncTries >= 3) clearInterval(camSync);
+        } catch { clearInterval(camSync); }
+      }, 1500);
+    }
+
+  // --- CICLO 6: panel de settings de dispositivos (⚙️) ---
+  const devBtn = document.createElement("button");
+  devBtn.title = "Dispositivos (mic/cámara/salida)";
+  devBtn.textContent = "⚙️";
+  devBtn.onclick = () => openSettings(sc);
+  bar.appendChild(devBtn);
 
   // --- Emojis (Ciclo 1, Tito): UN botón 🎭 en la barra; overlay con paleta
   // a color que QUEDA ABIERTO hasta que envías (al enviar se cierra);

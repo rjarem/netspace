@@ -49,3 +49,9 @@ y panel admin).
   lista de acceso). Documentarlas aquí para no perderlas.
 - La de salón de clases refuerza la necesidad del flag de ROLES ya existente
   (admin/speaker/panelist/attendee/dj) — el presentador sería otro uso de "speaker".
+
+## Dominios (Tito, 18-sep — REGLA dura)
+- **turedvirtual.vip = SOLO PRUEBAS.** Nada difícil de revertir ahí; es el sandbox.
+- **Dominio final de prod: grooveradius.app** — migrar cuando el producto esté listo (DNS + compose + CLIENT_ORIGIN + URLs de shortlinks).
+- **Roadmap white-label:** posibilidad de que otros usen la app en SU subdominio (multi-tenant). Ya hablado con Tito, parte del plan.
+- Gotcha descubierto en pruebas 18-sep: el panel /admin vive en el dominio API (api.turedvirtual.vip/admin); play. manda cualquier ruta desconocida al fallback SPA (parece bug pero es el cliente).
