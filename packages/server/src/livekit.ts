@@ -15,6 +15,11 @@ export async function mintLiveKitToken(
   const at = new AccessToken(apiKey, apiSecret, {
     identity: opts.identity,
     name: opts.name,
+    // CICLO 7.2 (auditor-firmado): TTL explícito — sin esto el token vive el
+    // default (~6h) y un usuario en evento largo pierde la capacidad de
+    // RECONEXIÓN (la sesión viva no se corta; el token solo se valida al
+    // conectar). El intervalo de worldRoom re-mintea cada 4h.
+    ttl: Number(process.env.LIVEKIT_TOKEN_TTL ?? 86400), // 24h default; gates acortan
   });
   at.addGrant({
     room: ROOM,

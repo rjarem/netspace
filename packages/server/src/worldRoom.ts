@@ -122,6 +122,10 @@ export class WorldRoom extends Room<WorldState> {
   }
   // Fase 8: poda de fantasmas + H6 (kickedTokens acotado)
   pruneGhosts: ReturnType<typeof setInterval> | null = null;
+  // CICLO 7.2 (auditor-firmado): re-minteo periódico de tokens de voz.
+  // lastVoiceZone por sesión para re-mintear con la zona ACTUAL de cada cliente.
+  voiceRefresh: ReturnType<typeof setInterval> | null = null;
+  lastVoiceZone = new Map<string, string>();
   ghostSeenAt = new Map<string, number>();
   // CICLO 5: reportes (memoria de sala)
   reportAt = new Map<string, number>();        // sessionId → last ts (1/min)
@@ -419,6 +423,11 @@ export class WorldRoom extends Room<WorldState> {
       }
     }, 15000);
     this.ghostSeenAt = new Map();
+
+    // CICLO 7.2 (auditor-firmado): re-minteo periódico de tokens de voz
+    // (TTL 24h en livekit.ts; este intervalo re-mintea cada 4h por default —
+    // env VOICE_REFRESH_MS solo ACORTA en gates, firma del auditor).
+    this.startVoiceRefresh();
 
     // Fase 2b: one-shot avatar photo upload at join. Capped at 60KB of dataURL
     // (client sends ~256px jpeg q0.82 ≈ 15-30KB) to keep the state payload sane.
@@ -719,11 +728,34 @@ export class WorldRoom extends Room<WorldState> {
       isViewer: !canPublish,
       mediaRef: zone?.mediaRef || "",
     });
+    // CICLO 7.2: registrar la última zona con voz de esta sesión — el
+    // intervalo de re-minteo usa ESTA zona (no la de join).
+    this.lastVoiceZone.set(client.sessionId, zoneId);
+  }
+
+  // CICLO 7.2 (auditor-firmado): re-minteo de tokens de voz. La sesión viva
+  // NO se corta (LiveKit valida el token solo al conectar) — el cliente
+  // guarda el token nuevo en lkLastMsg para el próximo rejoin (hook del 7.1).
+  startVoiceRefresh() {
+    if (this.voiceRefresh) return;
+    const ms = Number(process.env.VOICE_REFRESH_MS ?? 4 * 60 * 60 * 1000); // 4h default; gates acortan
+    this.voiceRefresh = setInterval(() => {
+      for (const c of this.clients as any[]) {
+        const p = this.state.players.get(c.sessionId);
+        const zoneId = this.lastVoiceZone.get(c.sessionId);
+        if (!p || !zoneId) continue;
+        this.sendLiveKitToken(c, p, zoneId);
+      }
+    }, ms);
+    this.voiceRefresh.unref?.();
   }
 
   onDispose() {
     // Fase 8: limpiar interval de poda + registro para /api/mod
     if (this.pruneGhosts) { clearInterval(this.pruneGhosts); this.pruneGhosts = null; }
+    // CICLO 7.2 (condición del auditor): interval de voz limpiado en dispose
+    if (this.voiceRefresh) { clearInterval(this.voiceRefresh); this.voiceRefresh = null; }
+    this.lastVoiceZone.clear();
     worldRooms.delete(this);
   }
 }

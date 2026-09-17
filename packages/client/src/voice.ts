@@ -135,6 +135,10 @@ function audioWatchdog(sc: SC) {
 
 export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneId: string; isViewer?: boolean }) {
     if (!msg.token || !msg.url) return;
+    // CICLO 7.2 (interacción 7.1×7.2 detectada en gate): con re-minteo
+    // frecuente, un msg del server puede llegar MIENTRAS un connect está en
+    // vuelo — no arrancar otro join encima; solo actualizar el último msg.
+    if ((sc as any).lkConnecting) { sc.lkLastMsg = msg; return; }
     // CICLO 7.1 (auditor-firmado): el early-return ahora exige room CONECTADO.
     // Antes: lkRoom existente en estado disconnected/failed tras un blip →
     // return silencioso → voz muerta hasta recargar (bug de campo).
@@ -213,7 +217,9 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
       if (new URLSearchParams(location.search).has("voicetest")) {
         try { const vt = await import("./voicetest"); vt.instrumentVoice(sc, room); } catch {}
       }
+      (sc as any).lkConnecting = true; // guard 7.2: joins concurrentes chocan
       await room.connect(msg.url, msg.token);
+      (sc as any).lkConnecting = false;
       sc.lkRoom = room;
       sc.lkLastMsg = { token: msg.token, url: msg.url, zoneId: msg.zoneId, isViewer: msg.isViewer };
       sc.lkRejoinTries = 0;
@@ -299,6 +305,7 @@ export async function joinVoice(sc: SC, msg: { token: string; url: string; zoneI
       }
       console.log("[voice] connected to", msg.zoneId);
     } catch (e) {
+      (sc as any).lkConnecting = false; // guard 7.2: liberar en fallo
       console.error("[voice] connect failed:", e);
       sc.pushDbg("voice-fail:" + (e as Error).message.slice(0, 120));
     }
