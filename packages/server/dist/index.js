@@ -8,6 +8,10 @@ import { WorldRoom, worldRooms } from "./worldRoom.js";
 import { inviteRouter } from "./invite.js";
 const PORT = parseInt(process.env.PORT || "2567");
 const app = express();
+// Bloqueante 2 (auditor): trust proxy — en prod req.ip sin esto es la IP del
+// proxy para TODOS y el límite 10/min se vuelve GLOBAL (429 en el arranque
+// de un evento, el caso de uso exacto).
+app.set("trust proxy", 1);
 // Fase 8: exponer el roomId de la sala nombrada — el cliente entra por ID
 // (matchmake determinista REAL; mata la carrera A/B del gate C). CORS abierto:
 // el fetch del cliente (play.→api.) es cross-origin y SIN esta cabecera el
