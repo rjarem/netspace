@@ -5,7 +5,7 @@ import colyseus from "colyseus";
 const { Server } = colyseus;
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { WorldRoom, worldRooms } from "./worldRoom.js";
-import { inviteRouter, adminOk } from "./invite.js";
+import { inviteRouter, adminOk, adminGate } from "./invite.js";
 // Ciclo 6b (auditor-firmado): origen del CLIENTE para data-co del botón
 // "Entrar a la sala" de /admin (mismo criterio que invite.ts).
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "https://play.turedvirtual.vip";
@@ -108,7 +108,10 @@ app.use(inviteRouter());
 // x-admin-token. Acciones: mute|unmute|kick|ban|unban|broadcast|grant|revoke.
 app.post("/api/mod", (req, res) => {
     // Ciclo 6.1 (auditor): fail-closed + timing-safe — mismo criterio que
-    // invite.ts (antes este path caía a "" y invite.ts a "dev-admin").
+    // invite.ts (antes este path caía a "" e invite.ts a "dev-admin").
+    // CICLO 9.2: adminGate — rate-limit de fallos con header presente (6º → 429).
+    if (!adminGate(req, res))
+        return;
     if (!adminOk(req)) {
         return res.status(401).json({ error: "unauthorized" });
     }

@@ -38,6 +38,41 @@ export function adminOk(req) {
     }
     return crypto.timingSafeEqual(a, b);
 }
+// CICLO 9.2 (plan firmado 2026-09-18): rate-limit de auth admin fallida —
+// control compensatorio para ADMIN_TOKEN elegible. CHOKE POINT ÚNICO
+// (auditor, coherente con 6.1): todos los endpoints admin pasan por aquí.
+// Reglas de firma:
+//  - SOLO cuentan fallos con header x-admin-token PRESENTE (ciclo61-f hace
+//    5-6 requests sin header esperando 401 — no se incrementa).
+//  - 5 fallos permitidos por IP/min; el 6º intento → 429.
+//  - Mapa SEPARADO de ipWindow (resolve) → ciclo6b-g intacto por construcción.
+//  - Éxito auténtico resetea el contador de la IP.
+const adminFail = new Map();
+const ADMIN_FAIL_LIMIT = 5;
+const ADMIN_FAIL_WINDOW_MS = 60_000;
+export function adminGate(req, res) {
+    const hdr = req.headers["x-admin-token"];
+    const hasHdr = typeof hdr === "string" && hdr.length > 0;
+    const ip = String(req.ip || "unknown");
+    const e = adminFail.get(ip);
+    if (hasHdr && e && Date.now() < e.reset && e.n >= ADMIN_FAIL_LIMIT) {
+        res.status(429).json({ error: "too many attempts" });
+        return false;
+    }
+    if (adminOk(req)) {
+        if (hasHdr)
+            adminFail.delete(ip);
+        return true;
+    }
+    if (hasHdr) {
+        if (!e || Date.now() >= e.reset)
+            adminFail.set(ip, { n: 1, reset: Date.now() + ADMIN_FAIL_WINDOW_MS });
+        else
+            e.n++;
+    }
+    res.status(401).json({ error: "unauthorized" });
+    return false;
+}
 export function inviteRouter() {
     const r = Router();
     r.use(express.json());
@@ -45,8 +80,8 @@ export function inviteRouter() {
     // /admin): createdBy es handle libre del body — nunca debe llegar a HTML
     const sanitizeCreatedBy = (s) => s.replace(/[<>&"']/g, "");
     r.post("/api/invite", async (req, res) => {
-        if (!adminOk(req))
-            return res.status(401).json({ error: "unauthorized" });
+        if (!adminGate(req, res))
+            return;
         const { handle, role, hours } = req.body || {};
         // 16-sep (Tito): handle OPCIONAL — sin handle = invitación de EVENTO
         // (link genérico para N invitados, cada quien elige su nombre).
@@ -63,8 +98,8 @@ export function inviteRouter() {
     // Crear (admin token): body {token} JWT ya minteado, o {role, hours} para
     // mintear+encurtir en un paso.
     r.post("/api/shortlink", async (req, res) => {
-        if (!adminOk(req))
-            return res.status(401).json({ error: "unauthorized" });
+        if (!adminGate(req, res))
+            return;
         let token = String(req.body?.token || "");
         let exp = 0;
         if (!token) {
@@ -124,8 +159,8 @@ export function inviteRouter() {
     // --- Ciclo 5 (auditor §3): listado de links activos — SOLO con ADMIN_TOKEN,
     // sin exponer JWTs. Para la página /admin.
     r.get("/api/shortlinks", (req, res) => {
-        if (!adminOk(req))
-            return res.status(401).json({ error: "unauthorized" });
+        if (!adminGate(req, res))
+            return;
         const links = loadLinks();
         const out = [];
         for (const [code, e] of links) {
@@ -142,6 +177,13 @@ export function inviteRouter() {
     });
     // Revocar: admin token O el creador demostrando el JWT original.
     r.post("/api/shortlink/revoke", (req, res) => {
+        // CICLO 9.2: si trae header admin, pasa por el gate (cuenta fallos);
+        // sin header → vía creador-JWT, sin incrementar contador.
+        const hdr = req.headers["x-admin-token"];
+        if (typeof hdr === "string" && hdr.length > 0) {
+            if (!adminGate(req, res))
+                return;
+        }
         const isAdmin = adminOk(req);
         const code = String(req.body?.code || "").toLowerCase();
         const links = loadLinks();

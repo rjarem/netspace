@@ -173,6 +173,8 @@ export class WorldRoom extends Room {
         this.reportCount = new Map(); // handle lower → contador
         // Ciclo 3: rate-limit de minteo 10/día/handle (memoria)
         this.mintCount = new Map();
+        // CICLO 9.2: intentos admin:mint por sessionId (5/3min) — precisión auditor.
+        this.mintTry = new Map();
         // Fase 5a (escala): broadcastProximity() ELIMINADO — sin O(N²) cada 200ms.
         /** Mint a LiveKit token when zone membership changes (audience ↔ stage). */
         this.lastZoneOf = new Map();
@@ -377,6 +379,21 @@ export class WorldRoom extends Room {
         // shortlink. Server-side: SOLO p.role==='admin' pasa (el cliente nunca
         // ve ADMIN_TOKEN). TTL fijo 1h (rol sensible), rate-limit 5/día.
         this.onMessage("admin:mint", (client) => {
+            // CICLO 9.2 (precisión auditor): limiter por sessionId — 5 intentos /
+            // 3 min. Sin rol → intento cuenta; excedido → ignorado silencioso
+            // (mismo comportamiento que attendee) + log de moderación.
+            const skey = `__minttry:${client.sessionId}`;
+            const now = Date.now();
+            const prev = this.mintTry.get(skey);
+            if (!prev || now > prev.reset)
+                this.mintTry.set(skey, { n: 1, reset: now + 180_000 });
+            else {
+                prev.n++;
+                if (prev.n > 5) {
+                    this.logMod(client, "admin-mint-throttled", client.sessionId);
+                    return;
+                }
+            }
             const p = this.state.players.get(client.sessionId);
             if (!p || p.role !== "admin")
                 return;
