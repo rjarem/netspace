@@ -226,6 +226,34 @@ export function installActionBar(sc: SC) {
     bar.appendChild(megaBtn);
     stageBtns.push(megaBtn);
 
+    // --- 8.3 (plan auditor): 🌐 SOLO admin — mintea JWT admin 1h + shortlink
+    // y abre la sala autenticada en pestaña nueva. El server valida role
+    // (admin:mint); el cliente nunca ve ADMIN_TOKEN.
+    const globeBtn = document.createElement("button");
+    globeBtn.title = "Link de acceso admin (1h) — abre la sala autenticada";
+    globeBtn.textContent = "🌐";
+    globeBtn.onclick = () => {
+      const st = document.getElementById("status");
+      const room: any = sc.room;
+      room?.send("admin:mint");
+      const onMinted = (m: any) => {
+        room.offMessage?.("invite:minted", onMinted);
+        if (!m?.ok) { if (st) st.textContent = "🌐 " + (m?.error || "mint falló"); return; }
+        const url = `${location.origin}/i/${m.code}`;
+        void navigator.clipboard?.writeText(url).catch(() => {});
+        if (st) st.textContent = `🌐 Link admin 1h copiado: ${url}`;
+        window.open(url, "_blank");
+      };
+      room.onMessage("invite:minted", onMinted);
+    };
+    const refreshGlobe = () => {
+      const me = sc.players.get(myIdRef.id);
+      globeBtn.style.display = me?.role === "admin" ? "" : "none";
+    };
+    window.addEventListener("gr-role", refreshGlobe);
+    refreshGlobe();
+    bar.appendChild(globeBtn);
+
     const scrBtn = document.createElement("button");
     scrBtn.title = "Compartir pantalla";
     let scrOn = false;
