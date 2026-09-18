@@ -203,3 +203,47 @@ export function renderUserList(sc: SC) {
     }
   }
 
+
+// === CICLO 8.4 (plan auditor): menú contextual clic-derecho (desktop-only).
+// Reutiliza EXACTAMENTE la lógica 8.2: espejo mayTouch (RANK) + confirmaciones
+// obligatorias. Solo administradores/moderadores ven acciones de mod.
+export function installContextMenu(sc: any) {
+  const RANK: Record<string, number> = { attendee: 0, speaker: 0, panelist: 0, dj: 0, moderator: 1, admin: 2 };
+  let menu: HTMLDivElement | null = null;
+  const close = () => { if (menu) { menu.remove(); menu = null; } };
+  window.addEventListener("click", close);
+  window.addEventListener("gr-role", close);
+  window.addEventListener("gr-ctxmenu", (ev: Event) => {
+    close();
+    const d = (ev as CustomEvent).detail || {};
+    const full = d.handle; if (!full) return;
+    const me = sc.players.get(sc.myId);
+    const myRole = (me?.role || "").toLowerCase();
+    const iAmMod = myRole === "admin" || myRole === "moderator";
+    const targetRole = (d.role || "attendee").toLowerCase();
+    const canTouch = (RANK[myRole] ?? 0) > (RANK[targetRole] ?? 0);
+    if (!iAmMod || !canTouch) return; // clic derecho sin permisos: nada (como el server)
+    menu = document.createElement("div");
+    menu.id = "gr-ctxmenu";
+    menu.style.cssText = "position:fixed;z-index:9999;display:flex;flex-direction:column;gap:4px;background:#1e1e1e;border:1px solid #555;border-radius:8px;padding:6px;box-shadow:0 4px 16px rgba(0,0,0,.5);";
+    const mk = (label: string, color: string, title: string, needConfirm: boolean, send: () => void) => {
+      const b = document.createElement("button");
+      b.textContent = label; b.title = title;
+      b.style.cssText = `font:12px system-ui;padding:5px 10px;border-radius:6px;border:1px solid ${color};background:transparent;color:${color};cursor:pointer;text-align:left;`;
+      b.onclick = (e) => { e.stopPropagation(); if (!needConfirm || window.confirm(`${label} a ${full}?`)) { send(); close(); } };
+      menu!.appendChild(b);
+    };
+    mk("🙊 Mute/Unmute impuesto", "#ffb74d", "Mute/Unmute impuesto", false, () => sc.room?.send("mod:mute", { handle: full, on: true }));
+    if (myRole === "admin") {
+      mk("👢 Expulsar", "#ff8a80", "Su token no re-entra", true, () => sc.room?.send("mod:kick", { handle: full }));
+      mk("⛔ BAN", "#ff5252", "PERMANENTE, sin undo desde el cliente", true, () => sc.room?.send("mod:ban", { handle: full }));
+      if (targetRole === "attendee") mk("⭐ Hacer moderador", "#ffd54f", "Vive solo esta sesión", false, () => sc.room?.send("mod:role", { handle: full, role: "moderator" }));
+      else if (targetRole === "moderator") mk("☆ Degradar a usuario", "#90a4ae", "Vive solo esta sesión", false, () => sc.room?.send("mod:role", { handle: full, role: "attendee" }));
+    }
+    document.body.appendChild(menu);
+    // clamp al viewport
+    const r = menu.getBoundingClientRect();
+    menu.style.left = Math.min((d as any).x, window.innerWidth - r.width - 8) + "px";
+    menu.style.top = Math.min((d as any).y, window.innerHeight - r.height - 8) + "px";
+  });
+}

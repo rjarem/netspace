@@ -6,7 +6,7 @@ import {
 } from "./constants";
 import { joinVoice, updateVoiceStatus, onRemoteAudio, updateSpatialAudio, updateSubscriptions, teardownAudioChain } from "./voice";
 import { onRemoteVideo, removeRemoteVideo, ensureBubble, showLocalPreview, updateBubbles } from "./bubbles";
-import { renderMinimap, renderUserList } from "./hud";
+import { renderMinimap, renderUserList, installContextMenu } from "./hud";
 import { installActionBar } from "./actionbar";
 import { installMapOverlay, updateHalos, updateVisuals, updateProximityRings } from "./visuals";
 import { onServerPosition, tick, animateOwnMove } from "./movement";
@@ -79,6 +79,21 @@ class WorldScene extends Phaser.Scene {
     this.input.on("pointerdown", (pointer: Phaser.Input.Pointer) => {
       // Fix (Tito, 14-sep): pinch-zoom (2 dedos) no debe mover el avatar.
       if ((this as any).pinching) return;
+      // CICLO 8.4 (plan auditor): clic derecho (desktop-only) sobre OTRO jugador
+      // → menú contextual de moderación; NO mueve el avatar (click-to-move intacto).
+      if (pointer.rightButtonDown()) {
+        const wx = pointer.worldX, wy = pointer.worldY;
+        const tx = Math.floor(wx / TILE), ty = Math.floor(wy / TILE);
+        let hit: any = null;
+        this.players.forEach((ui: any, id: string) => {
+          if (id === this.myId) return;
+          const px = Math.floor((ui.sprite?.x ?? -1) / TILE);
+          const py = Math.floor((ui.sprite?.y ?? -1) / TILE);
+          if (px === tx && py === ty) hit = { id, handle: ui.handle, role: ui.role, x: wx, y: wy };
+        });
+        if (hit) window.dispatchEvent(new CustomEvent("gr-ctxmenu", { detail: hit }));
+        return; // clic derecho nunca mueve el avatar
+      }
       this.target = {
         x: Math.floor(pointer.worldX / TILE),
         y: Math.floor(pointer.worldY / TILE),
@@ -370,6 +385,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
 
     // Fase 7: barra de acciones flotante (mic, emojis, salir) — decisión Tito 15-sep
     try { installActionBar(this); } catch (e) { console.warn("[actionbar]", e); }
+    try { installContextMenu(this); } catch (e) { console.warn("[ctxmenu]", e); } // 8.4
     try { installMapOverlay(this); } catch (e) { console.warn("[mapoverlay]", e); }
 
     // d-pad rosetta REMOVED (v2 controls, decision 13-sep): was stealing screen
@@ -453,7 +469,6 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
   // ---- HUD — bodies in hud.ts ----
   renderMinimap() { renderMinimap(this); }
   renderUserList() { renderUserList(this); }
-
   addPlayer(id: string, player: any) {
     if (this.players.has(id)) return;
     const colors: Record<string, number> = {
