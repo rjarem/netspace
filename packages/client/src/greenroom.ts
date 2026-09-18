@@ -46,6 +46,7 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
       <input id="grInvite" placeholder="Link o código de invitación" maxlength="2000"
         style="padding:8px 14px;border-radius:8px;border:1px solid #333;background:#1a1d27;color:#9aa4bf;font-size:12px;width:244px;text-align:center" />
       <span id="grInviteInfo" style="font-size:12px;color:#6be38a;display:none">✅ Invitación detectada en el link</span>
+      <span id="grForget" style="font-size:11px;color:#9aa4bf;cursor:pointer;text-decoration:underline;display:none">olvidar esta invitación</span>
       <div id="grHints" style="font-size:13px;text-align:center;line-height:1.5">
         <span id="grHintHandle" style="color:#ffb347">⚠️ Falta tu handle</span><br>
         <span id="grHintPhoto" style="color:#ffb347">⚠️ Falta tu foto de avatar</span>
@@ -69,10 +70,64 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
     // muestra confirmación — flujo de invitado: abrir link → handle + foto → entrar.
     const urlInvite = new URLSearchParams(location.search).get("invite");
     const hintHandle = document.getElementById("grHintHandle")!;
+    // CICLO 9.1 (plan firmado 2026-09-18): sesión persistente del invitado.
+    // Keys localStorage (inventario completo): gr-invite, gr-invite-exp,
+    // gr-handle, gr-photo (este archivo) + gr-device-mic/cam/out (devices.ts)
+    // + gr-server-build (main.ts). PROHIBIDO persistir JWTs role=admin
+    // (precisión auditor) — el 🌐 admin cuesta 1 click, es el compromiso
+    // declarado. NUNCA se persiste ADMIN_TOKEN (nunca llega al cliente).
+    const INV_KEY = "gr-invite", INV_EXP_KEY = "gr-invite-exp";
+    const HANDLE_KEY = "gr-handle", PHOTO_KEY = "gr-photo";
+    const jwtField = (v: string, f: string): string => {
+      try {
+        const p = JSON.parse(atob(v.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+        return String(p?.[f] ?? "");
+      } catch { return ""; }
+    };
+    const forgetBtn = document.getElementById("grForget") as HTMLSpanElement | null;
+    const lsGet = (k: string) => { try { return localStorage.getItem(k) || ""; } catch { return ""; } };
+    const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* private mode */ } };
     if (urlInvite && inviteIn) {
       inviteIn.value = urlInvite;
       inviteInfo.style.display = "inline";
       try { history.replaceState(null, "", location.pathname); } catch {}
+      // Persistir SOLO si el rol del JWT no es admin (precisión auditor).
+      // El exp va en segundos; si es un código corto (no JWT), no hay exp
+      // local — el server lo rechaza con 410/404 al usarlo.
+      const role = jwtField(urlInvite, "role");
+      if (role !== "admin") {
+        lsSet(INV_KEY, urlInvite);
+        const exp = jwtField(urlInvite, "exp");
+        if (exp) lsSet(INV_EXP_KEY, exp);
+      }
+      if (forgetBtn) forgetBtn.style.display = lsGet(INV_KEY) ? "inline" : "none";
+    } else {
+      // Sin invite en URL: restaurar la invitación guardada (1 click).
+      const saved = lsGet(INV_KEY);
+      const expS = Number(lsGet(INV_EXP_KEY)) || 0;
+      if (saved) {
+        if (expS && Date.now() / 1000 > expS) {
+          try { localStorage.removeItem(INV_KEY); localStorage.removeItem(INV_EXP_KEY); } catch {}
+          inviteInfo.style.display = "inline";
+          inviteInfo.style.color = "#ffb347";
+          inviteInfo.textContent = "⏳ Tu invitación guardada expiró — pide una nueva";
+        } else {
+          if (inviteIn) inviteIn.value = saved;
+          inviteInfo.style.display = "inline";
+          inviteInfo.textContent = "✅ Invitación guardada lista — solo entra";
+          if (forgetBtn) forgetBtn.style.display = "inline";
+        }
+      }
+    }
+    if (forgetBtn) {
+      forgetBtn.onclick = () => {
+        try { localStorage.removeItem(INV_KEY); localStorage.removeItem(INV_EXP_KEY); } catch {}
+        if (inviteIn) inviteIn.value = "";
+        if (forgetBtn) forgetBtn.style.display = "none";
+        inviteInfo.style.display = "inline";
+        inviteInfo.style.color = "#9aa4bf";
+        inviteInfo.textContent = "Invitación olvidada — pega un código o link nuevo";
+      };
     }
     const hintPhoto = document.getElementById("grHintPhoto")!;
     const ambient = document.getElementById("grAmbient") as HTMLInputElement;
@@ -107,6 +162,20 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
       hintPhoto.style.color = photoDone ? "#6be38a" : "#ffb347";
       snapBtn.style.borderColor = photoDone ? "#4f7cff" : "#ffb347";
       snapBtn.style.color = photoDone ? "#dbe4ff" : "#ffb347";
+    };
+
+    // CICLO 9.1: restaurar handle y foto guardados (click único — precisión
+    // auditor: handle y foto también son obligatorios, se restauran, no se
+    // saltan). La foto solo se restaura si hay stream (cámara disponible).
+    const savedHandle = lsGet(HANDLE_KEY);
+    if (savedHandle && !handleIn.readOnly && !handleIn.value.trim()) handleIn.value = savedHandle;
+    const savedPhoto = lsGet(PHOTO_KEY);
+    const restorePhoto = () => {
+      if (!savedPhoto || photo) return;
+      photo = savedPhoto;
+      snapOk.style.display = "inline";
+      snapBtn.textContent = "📷 Repetir foto";
+      refreshHints();
     };
 
     let stream: MediaStream | null = null;
@@ -215,6 +284,11 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
     handleIn.addEventListener("input", refreshHints);
 
     goBtn.onclick = () => {
+      // CICLO 9.1: persistir handle + foto (conveniencia, no credencial) —
+      // claves de inventario documentado en el encabezado 9.1.
+      const h2 = handleIn.value.trim();
+      if (h2) lsSet(HANDLE_KEY, h2);
+      if (photo) lsSet(PHOTO_KEY, photo);
       // Validation (Tito: users must not slip in without completing steps)
       const handle = handleIn.value.trim();
       if (!handle) {
@@ -249,6 +323,7 @@ export function runGreenRoom(): Promise<GreenRoomResult> {
       if (e.key === "Enter") goBtn.click();
     });
 
-    openStream();
+    // CICLO 9.1: restaurar foto guardada cuando el stream esté listo.
+    void openStream().then(() => restorePhoto());
   });
 }
