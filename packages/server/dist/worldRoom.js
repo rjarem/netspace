@@ -373,6 +373,30 @@ export class WorldRoom extends Room {
             })
                 .catch(() => client.send("invite:minted", { ok: false, error: "mint falló" }));
         });
+        // CICLO 8.3 (plan auditor): botón 🌐 del admin — mintea JWT admin 1h +
+        // shortlink. Server-side: SOLO p.role==='admin' pasa (el cliente nunca
+        // ve ADMIN_TOKEN). TTL fijo 1h (rol sensible), rate-limit 5/día.
+        this.onMessage("admin:mint", (client) => {
+            const p = this.state.players.get(client.sessionId);
+            if (!p || p.role !== "admin")
+                return;
+            const day = new Date().toISOString().slice(0, 10);
+            const key = `__admin:${p.handle.toLowerCase()}:${day}`;
+            const n = (this.mintCount.get(key) || 0) + 1;
+            if (n > 5) {
+                client.send("invite:minted", { ok: false, error: "límite diario de links admin (5/día)" });
+                return;
+            }
+            this.mintCount.set(key, n);
+            const exp = Math.floor(Date.now() / 1000) + 3600; // 1h fijo
+            void signInviteToken(process.env.JWT_SECRET || "dev-secret-change-me", { handle: "", role: "admin", exp })
+                .then((token) => {
+                const code = createShortlink(token, exp, p.handle);
+                this.logMod(client, "admin-mint", code);
+                client.send("invite:minted", { ok: true, token, code, role: "admin", exp });
+            })
+                .catch(() => client.send("invite:minted", { ok: false, error: "mint falló" }));
+        });
         // CICLO 5 (auditor §4): reportar usuario — cualquier usuario puede, el
         // notice llega solo a admin/moderator presentes (el attendee NO lo ve).
         // Rate-limit 1/min por usuario (server-side). Contador por target en
