@@ -130,3 +130,7 @@ El compose de prod en Dokploy baja el código con `curl codeload.github.com/rjar
 - `compose.redeploy` (API/MCP) es instantaneo y NO re-descarga codigo: solo recrea contenedores con el pin vigente. Si el pin no cambio, prod sigue en la version anterior aunque master este adelante.
 - Checklist de deploy: (1) commit+push a master; (2) Tito actualiza el HASH en Dokploy (world + client) y deploya — debe durar minutos; (3) verificar con `npx tsx packages/server/scripts/mintcheck-prod.mts` -> `MINT_OK` (o smoke equivalente contra wss://api.turedvirtual.vip).
 - 2026-09-18: hash actual `cbc888c` (dist con admin:mint — fix ciclo8.3; nunca se habia committeado el dist desde feca6f5).
+
+## Gotchas de gates tras Ciclo 9 (2026-09-18)
+1. **LiveKit local debe estar vivo para 8.1-e** (volumen del hablante remoto): `docker run -d --name gr-livekit-gate --network host livekit/livekit-server --dev`. Si 7880 no responde, 8.1-e da vol:-1 y ciclo6 puede fallar cámara — NO es regresión.
+2. **Handle persistido (9.1) × harness:** los gates que entran 2+ usuarios en un MISMO chrome deben poner el handle incondicionalmente (`el.value="${handle}"`), no solo si el campo está vacío — el `gr-handle` guardado pre-llena con el handle del usuario anterior y mezcla roles en el userlist. Corregido en gate-8-1/8-2/8-3/8-4.

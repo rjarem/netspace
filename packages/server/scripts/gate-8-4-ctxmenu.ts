@@ -62,7 +62,7 @@ const enterPage = async (c: CDP, role: string, handle: string) => {
     await sleep(1000);
     const hasGo = await c.evalJS(tid, "(() => { const b=document.getElementById('grGo'); return !!b && !b.disabled; })()");
     if (hasGo) {
-      await c.evalJS(tid, `(() => { const el=document.getElementById('grHandle'); if(el && !el.value){ el.value="${handle}"; el.dispatchEvent(new Event("input")); } })()`);
+      await c.evalJS(tid, `(() => { const el=document.getElementById('grHandle'); if(el){ el.value="${handle}"; el.dispatchEvent(new Event("input")); } })()`);
       const snap = await c.evalJS(tid, "(() => { const v=document.querySelector('video'); const s=document.getElementById('grSnap'); if(s && v && v.videoWidth){ s.click(); return true; } return false; })()");
       if (snap) await sleep(500);
       await c.evalJS(tid, "document.getElementById('grGo')?.click()");
