@@ -124,3 +124,9 @@ Spawn attendee: (4+n, 4) — afuera de todas las zonas.
   HOY las zonas son estáticas en world.ts; el admin API se construye en Fase 3.
 - **Fase 4:** Prueba con 2-3 invitados reales.
 - Pulir: movimiento flechas "brinca" (suavizar tick), sprites bonitos.
+
+## Deploy a prod — pin manual del tarball (REGLA, 2026-09-18)
+El compose de prod en Dokploy baja el código con `curl codeload.github.com/rjarem/netspace/tar.gz/<HASH>` dentro del `command` de los servicios **world** y **client**. Ese HASH se actualiza MANUALMENTE en el panel de Dokploy (Tito) — el agente no puede editar el compose guardado.
+- `compose.redeploy` (API/MCP) es instantaneo y NO re-descarga codigo: solo recrea contenedores con el pin vigente. Si el pin no cambio, prod sigue en la version anterior aunque master este adelante.
+- Checklist de deploy: (1) commit+push a master; (2) Tito actualiza el HASH en Dokploy (world + client) y deploya — debe durar minutos; (3) verificar con `npx tsx packages/server/scripts/mintcheck-prod.mts` -> `MINT_OK` (o smoke equivalente contra wss://api.turedvirtual.vip).
+- 2026-09-18: hash actual `cbc888c` (dist con admin:mint — fix ciclo8.3; nunca se habia committeado el dist desde feca6f5).
