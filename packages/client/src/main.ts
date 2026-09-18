@@ -330,6 +330,27 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     };
     room.onMessage("banner", (msg: any) => showBanner(String(msg?.text || "")));
     if ((room.state as any).banner) showBanner(String((room.state as any).banner));
+
+    // --- 8.1: badge global del MEGÁFONO (visible para todos, late-joiners incluidos) ---
+    // megaphoneBy = sessionId del hablante ("" = off). Reacciona por onStateChange
+    // (evento del schema, no por-frame). Late-joiner: onStateChange.once del join
+    // + este listener cubren el estado ya-seteado.
+    const megaBadge = () => {
+      let el = document.getElementById("gr-mega-badge") as HTMLDivElement | null;
+      const who = String((room.state as any).megaphoneBy || "");
+      if (!who) { if (el) el.remove(); return; }
+      const p = (window as any).__ns?.scene?.players?.get?.(who);
+      const name = p?.handle || "Alguien";
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "gr-mega-badge";
+        el.style.cssText = "position:fixed;left:50%;transform:translateX(-50%);bottom:calc(8px + env(safe-area-inset-bottom,0px));z-index:84;background:rgba(255,179,71,.92);color:#221703;font:12px system-ui;padding:5px 12px;border-radius:14px;text-align:center;box-shadow:0 2px 8px #0006;pointer-events:none;white-space:nowrap;";
+        document.body.appendChild(el);
+      }
+      el.textContent = `📢 ${name} habla a TODO el evento`;
+    };
+    room.onStateChange?.(megaBadge);
+    megaBadge();
     room.onStateChange?.(() => showBanner(String((room.state as any).banner || "")));
 
     // Fase 7: barra de acciones flotante (mic, emojis, salir) — decisión Tito 15-sep
