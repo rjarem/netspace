@@ -197,9 +197,20 @@ export function installActionBar(sc: SC) {
   bar.appendChild(handBtn);
 
   // --- Fase 8: megáfono (📣) y pantalla (🖥) — admin/moderator/speaker/dj/inStage ---
-  const myRole = (sc.players.get(sc.myId)?.role) || "";
-  const canStage = ["admin", "moderator", "speaker", "dj"].includes(myRole) || sc.players.get(sc.myId)?.inStage;
-  if (canStage) {
+  // 8.0-fix: reactividad por EVENTO (no por-frame). Los botones siempre existen;
+  // su visibilidad se recalcula al recibir 'gr-role' (disparado por el onChange
+  // del schema de MI jugador en main.ts) y en la instalación. Lectura lazy del
+  // role: el getter del PlayerUI vive en schema (survive a mod:role en vivo).
+  const myIdRef = { id: sc.myId };
+  const stageBtns: HTMLButtonElement[] = [];
+  const refreshStage = () => {
+    const me = sc.players.get(myIdRef.id);
+    const myRole = (me?.role as string) || "";
+    const canStage = ["admin", "moderator", "speaker", "dj"].includes(myRole) || !!me?.inStage;
+    for (const b of stageBtns) b.style.display = canStage ? "" : "none";
+  };
+  window.addEventListener("gr-role", refreshStage);
+  {
     const megaBtn = document.createElement("button");
     megaBtn.title = "Megáfono (tu audio llega a todos, sin importar distancia)";
     let megaOn = false;
@@ -213,6 +224,7 @@ export function installActionBar(sc: SC) {
       if (st) st.textContent = megaOn ? "📢 MEGÁFONO ON — todo el evento te oye" : "Megáfono off";
     };
     bar.appendChild(megaBtn);
+    stageBtns.push(megaBtn);
 
     const scrBtn = document.createElement("button");
     scrBtn.title = "Compartir pantalla";
@@ -231,6 +243,7 @@ export function installActionBar(sc: SC) {
     };
     bar.appendChild(scrBtn);
   }
+  refreshStage();
 
   // --- Salir (rojo, decisión Tito 15-sep) — ÚNICO botón con color de la barra ---
   // === CICLO 3: botón ✉ invitaciones (mintea por mensaje, overlay con copiar) ===

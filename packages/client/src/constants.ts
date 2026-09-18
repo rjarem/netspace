@@ -48,6 +48,10 @@ export interface PlayerUI {
   audioEl?: HTMLAudioElement; // muted fallback element for remote audio
   audioNode?: AudioNode;      // Web Audio chain when available
   avatarColor: string;
+  // 8.0-fix: getters lazy instalados en main.ts (leen el schema sincronizado —
+  // sobreviven a mod:role en vivo, cero trabajo por-frame)
+  role?: string;
+  inStage?: boolean;
   // Ciclo 2: escala visual por proximidad (solo presentación)
   visScale?: number;
 }

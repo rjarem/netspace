@@ -62,7 +62,7 @@ export function renderUserList(sc: SC) {
     })) : undefined;
     groups.sort((g1, g2) => (g2 === myGroup ? 1 : 0) - (g1 === myGroup ? 1 : 0));
     // Skip rebuild when nothing user-visible changed (prevents killing in-flight taps)
-    const sig = groups.map((g) => g.map((id) => id + ":" + Math.round((sc.players.get(id)?.worldX || 0) / TILE) + "," + Math.round((sc.players.get(id)?.worldY || 0) / TILE)).join("|")).join(";");
+    const sig = groups.map((g) => g.map((id) => id + ":" + Math.round((sc.players.get(id)?.worldX || 0) / TILE) + "," + Math.round((sc.players.get(id)?.worldY || 0) / TILE) + ":" + ((sc.players.get(id) as any)?.role || "")).join("|")).join(";") + ":exp" + (ul.dataset.exp || "0");
     if ((ul as any)._sig === sig && ul.childElementCount > 0) return;
     (ul as any)._sig = sig;
     ul.innerHTML = "";

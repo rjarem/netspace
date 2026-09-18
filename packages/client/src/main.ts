@@ -451,6 +451,11 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
     const ui: PlayerUI = { sprite, label, handle: player.handle, worldX: wx, worldY: wy, avatarColor: colorHex };
     if (photoData) (ui as any).facePhoto = photoData; // para ensureBubble
     (ui as any).schema = player;
+    // 8.0-fix (firma auditor): role/inStage como GETTERS lazy sobre el schema —
+    // sobreviven a mod:role en vivo sin trabajo por-frame (visuals.ts ya leía
+    // schema?.role por el mismo motivo).
+    Object.defineProperty(ui, "role", { get: () => (player as any).role, configurable: true });
+    Object.defineProperty(ui, "inStage", { get: () => (player as any).inStage, configurable: true });
     (ui as any).faceRef = face;
     this.players.set(id, ui);
     // Schema 2.x: the players-map onChange does NOT fire on field updates —
@@ -459,6 +464,7 @@ mm.width = mmW; mm.height = Math.round(mmW / 2);
       player.onChange(() => {
         const cur = this.players.get(id);
         if (cur) this.onPlayerInstanceChange(id, player);
+        if (isMe) window.dispatchEvent(new CustomEvent("gr-role")); // 8.0-fix: reactividad de UI de rol
       });
     }
     if (isMe) {
