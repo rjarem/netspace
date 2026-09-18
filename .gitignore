@@ -2,4 +2,4 @@ dist/
 .env
 *.log
 node_modules/
-.vite/shortlinks.json
+shortlinks.json
