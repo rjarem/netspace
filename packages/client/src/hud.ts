@@ -110,10 +110,20 @@ export function renderUserList(sc: SC) {
           b.addEventListener("pointerup", (e) => { e.stopPropagation(); e.preventDefault(); send(); });
           row.appendChild(b);
         };
-        btn("🙊", "#ffb74d", () => sc.room?.send("mod:mute", { handle: full, on: !(p as any).mutedBy }), "Mute/Unmute impuesto");
-        if (myRole === "admin") {
-          btn("👢", "#ff8a80", () => sc.room?.send("mod:kick", { handle: full }), "Expulsar (su token no re-entra)");
-          btn("⛔", "#ff5252", () => sc.room?.send("mod:ban", { handle: full }), "Ban permanente");
+        // CICLO 8.2 (auditor): espejar mayTouch server-side (worldRoom RANK) —
+        // ocultar lo que el server rechazaría en silencio. Solo puedo tocar a
+        // quien tenga MENOR rango que yo.
+        const RANK: Record<string, number> = { attendee: 0, speaker: 0, panelist: 0, dj: 0, moderator: 1, admin: 2 };
+        const canTouch = (RANK[myRole] ?? 0) > (RANK[targetRole || "attendee"] ?? 0);
+        const confirmThen = (what: string, danger: string, send: () => void) => {
+          if (window.confirm(`${what} a ${full}?\n\n${danger}`)) send();
+        };
+        if (canTouch) {
+          btn("🙊", "#ffb74d", () => sc.room?.send("mod:mute", { handle: full, on: !(p as any).mutedBy }), "Mute/Unmute impuesto");
+        }
+        if (myRole === "admin" && canTouch) {
+          btn("👢", "#ff8a80", () => confirmThen("¿Expulsar (👢)", "Se le invalida su acceso actual: NO podrá re-entrar con el mismo token.", () => sc.room?.send("mod:kick", { handle: full })), "Expulsar (su token no re-entra)");
+          btn("⛔", "#ff5252", () => confirmThen("¿BANear a " + full + "?", "ES PERMANENTE y no hay undo desde el cliente. Un tap accidental aquí banea a alguien inocente.", () => sc.room?.send("mod:ban", { handle: full })), "Ban permanente");
           // CICLO 4 (auditor): promote/demote en vivo — solo attendee<->moderator.
           // El server re-verifica sender.role === "admin"; el botón es cosmética.
           if (targetRole === "attendee") {

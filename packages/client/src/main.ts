@@ -245,6 +245,21 @@ class WorldScene extends Phaser.Scene {
 
       // Fase 6: moderación — avisos y expulsión
       room.onMessage("mod-notice", (msg: any) => {
+        // CICLO 8.2 (auditor): toast de feedback para el MODERADOR que ejecutó
+        // la acción (msg.by === mi handle) — hoy solo el TARGET recibe aviso y
+        // el mod no sabe si su acción aplicó.
+        try {
+          const scAny = window as any;
+          if (msg?.by && scAny.__ns?.scene?.players?.get?.(scAny.__ns.scene.myId)?.handle === msg.by
+              && msg.type !== "hand-raise" && msg.type !== "hand-lower") {
+            const t = document.createElement("div");
+            t.textContent = `✓ ${msg.type === "mute" ? "🙊" : msg.type === "kick" ? "👢" : msg.type === "ban" ? "⛔" : "✓"} acción enviada: ${msg.target || ""}`;
+            t.style.cssText = "position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:90;background:#2d2d2d;color:#fff;font:12px system-ui;padding:7px 14px;border-radius:8px;box-shadow:0 2px 8px #0009;transition:opacity .4s;pointer-events:none;";
+            document.body.appendChild(t);
+            setTimeout(() => { t.style.opacity = "0"; }, 2600);
+            setTimeout(() => t.remove(), 3100);
+          }
+        } catch { /* no bloquear el flujo del notice */ }
         // CICLO 5: contador de reportes (badge visible solo para mods)
         if (msg?.type === "report") {
           const w = window as any;
