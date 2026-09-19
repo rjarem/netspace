@@ -147,3 +147,5 @@ Errores que ya se repitieron y cómo se previenen — NINGUNO es regresión de c
 6. **gr-handle heredado en harness**: gates con 2+ usuarios en un mismo chrome deben poner el handle incondicionalmente (fix 51995ec + parche gate-8-0).
 
 Si un gate falla: correr preflight primero; solo si está verde, el fail se investiga como código.
+7. **Rate-limit de invites (10/min/IP, ciclo6b)**: correr suites mint-heavy seguidas (9.2 → 9.3 → 10) quema la ventana → mints en 429 → "invalid token" en el join. Esperar ≥65s entre suites o reiniciar el server (mapa en memoria).
+8. **Sprites vs tweens en gates chrome**: teleportar un sprite en página ajena al dueño lo revierte el tween de onServerPosition / el push del Ciclo 10 → para clics de contexto, usar la posición REAL del sprite objetivo y ocultar (killTweens + y=-99999) a los demás. Reintentar right-click ×3 (menú nativo se lo come).

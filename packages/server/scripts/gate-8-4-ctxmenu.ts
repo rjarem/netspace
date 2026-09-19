@@ -114,38 +114,92 @@ const main = async () => {
     const moved = after?.tgt && pos.tgtBefore && (after.tgt.x !== pos.tgtBefore.x || after.tgt.y !== pos.tgtBefore.y);
     check("8.4-b clic derecho NO mueve el avatar (click-to-move intacto)", !moved, { tgtBefore: pos.tgtBefore, tgtAfter: after?.tgt });
 
-    // (c) moderator clic derecho sobre OTRO moderator → sin menú. Mod se pone encima del admin: usar posición del admin.
+    // (c) moderator clic derecho sobre ADMIN → sin menú (mayTouch espejado).
+    // CICLO 10 (harness): ya NO teleportamos sprites (el tween de
+    // onServerPosition y el empuje nuevo los reacomodan — fuente de flakes).
+    // En su lugar: ocultar a todos menos el admin (killTweens + fuera de
+    // cámara) y hacer right-click en la posición REAL del sprite del admin.
     const posAdmin = await c.evalJS(modTid, `(() => {
       const sc = window.__ns.scene;
-      let me = null; sc.players.forEach((ui, id) => { if (id === sc.myId) me = ui; });
       let found = null;
-      sc.players.forEach((ui, id) => { if (ui.handle === "Gate84Admin") found = ui; });
-      if (!found || !me) return null;
-      found.sprite.x = me.sprite.x + 32;
-      found.sprite.y = me.sprite.y;
+      sc.players.forEach((ui, id) => {
+        if (id === sc.myId) { sc.tweens.killTweensOf([ui.sprite, ui.label, ui.sprite.faceRef].filter(Boolean)); return; }
+        if (ui.handle === "Gate84Admin") { found = ui; return; }
+        sc.tweens.killTweensOf([ui.sprite, ui.label, ui.sprite.faceRef].filter(Boolean));
+        ui.sprite.y = -99999; ui.label.y = -99999;
+      });
+      if (!found) return null;
       const cam = sc.cameras.main;
-      return { sx: Math.round((found.sprite.x - cam.worldView.x) * cam.zoom), sy: Math.round((found.sprite.y - cam.worldView.y) * cam.zoom) };
+      return { sx: Math.round((found.sprite.x - cam.worldView.x) * cam.zoom), sy: Math.round((found.sprite.y - cam.worldView.y) * cam.zoom),
+               tx: Math.floor(found.sprite.x / 32), ty: Math.floor(found.sprite.y / 32) };
     })()`);
     if (posAdmin) {
-      await c.rightClickAt(modTid, posAdmin.sx, posAdmin.sy);
-      await sleep(600);
-      const noMenu = await c.evalJS(modTid, "!document.getElementById('gr-ctxmenu')");
-      check("8.4-c moderator sobre admin → SIN menú (mayTouch espejado)", noMenu === true, { noMenu });
+      // el right-click headless a veces lo come el menú nativo (lección de
+      // (a)) → reintentar; la aserción exige que NUNCA abra.
+      let opened = false, simRole: any = null;
+      for (let t = 0; t < 3 && !opened; t++) {
+        await c.rightClickAt(modTid, posAdmin.sx, posAdmin.sy);
+        await sleep(600);
+        const st = await c.evalJS(modTid, `(() => {
+          const sc = window.__ns.scene;
+          const m = document.getElementById('gr-ctxmenu');
+          // hit real: mismo test que main.ts hace con el pointer
+          let hit = null;
+          sc.players.forEach((ui, id) => {
+            if (id === sc.myId) return;
+            const px = Math.floor(ui.sprite.x / 32), py = Math.floor(ui.sprite.y / 32);
+            if (px === ${posAdmin.tx} && py === ${posAdmin.ty}) hit = ui.role;
+          });
+          return { noMenu: !m, hit };
+        })()`);
+        simRole = st?.hit ?? simRole;
+        if (st?.noMenu === false) opened = true;
+      }
+      check("8.4-c moderator sobre admin → SIN menú (mayTouch espejado)", opened === false && simRole === "admin", { opened, simRole });
     } else check("8.4-c moderator sobre admin → SIN menú (mayTouch espejado)", true, "admin no visible — skip aserción fuerte");
 
     // (d) desde el menú: ⭐ promociona (vía userlist-click sim o menú directo)
     // cerrar menú previo y reabrir
     await c.evalJS(adminTid, "document.getElementById('gr-ctxmenu')?.remove()");
-    await c.rightClickAt(adminTid, pos.sx, pos.sy);
-    await sleep(600);
-    const promoted = await c.evalJS(adminTid, `(() => {
-      const m = document.getElementById('gr-ctxmenu');
-      if (!m) return "no-menu";
-      const b=[...m.querySelectorAll("button")].find(x=>(x.textContent||"").includes("⭐"));
-      if (!b) return "no-star";
-      b.click();
-      return "clicked";
+    // CICLO 10: re-teleportar el sprite del attendee junto al admin (el push
+    // pudo mover su posición server durante b/c y el clic del setup ya no le pega).
+    const posD = await c.evalJS(adminTid, `(() => {
+      const sc = window.__ns.scene;
+      let me = null, found = null;
+      sc.players.forEach((ui, id) => { if (id === sc.myId) me = ui; else if (ui.handle === "Gate84Att") found = ui; });
+      if (!me || !found) return null;
+      sc.tweens.killTweensOf([found.sprite, found.label, found.sprite.faceRef].filter(Boolean));
+      found.sprite.x = me.sprite.x + 32; found.sprite.y = me.sprite.y;
+      found.label.x = found.sprite.x; found.label.y = found.sprite.y - 32;
+      const cam = sc.cameras.main;
+      return { sx: Math.round((found.sprite.x - cam.worldView.x) * cam.zoom), sy: Math.round((found.sprite.y - cam.worldView.y) * cam.zoom) };
     })()`);
+    const clickAt = posD || pos;
+    await c.rightClickAt(adminTid, clickAt.sx, clickAt.sy);
+    await sleep(600);
+    const dbgD = await c.evalJS(adminTid, `(() => {
+      const sc = window.__ns.scene; const m = document.getElementById('gr-ctxmenu');
+      let att = null, meP = null;
+      sc.players.forEach((ui, id) => { if (ui.handle === "Gate84Att") att = ui; else if (id === sc.myId) meP = ui; });
+      return { menu: !!m, att: att ? { x: Math.round(att.sprite.x), y: Math.round(att.sprite.y), sx: att.schema?.x, sy: att.schema?.y } : null,
+               me: meP ? { x: Math.round(meP.sprite.x), y: Math.round(meP.sprite.y), sx: meP.schema?.x, sy: meP.schema?.y } : null };
+    })()`);
+    console.log("DBG 8.4-d:", JSON.stringify(dbgD));
+    // reintento (misma lección de (a)): el primer right-click a veces lo come
+    // el menú nativo → hasta 3 intentos hasta que el menú aparezca.
+    let promoted: any = "no-menu";
+    for (let t = 0; t < 3 && promoted === "no-menu"; t++) {
+      await c.rightClickAt(adminTid, clickAt.sx, clickAt.sy);
+      await sleep(600);
+      promoted = await c.evalJS(adminTid, `(() => {
+        const m = document.getElementById('gr-ctxmenu');
+        if (!m) return "no-menu";
+        const b=[...m.querySelectorAll("button")].find(x=>(x.textContent||"").includes("⭐"));
+        if (!b) return "no-star";
+        b.click();
+        return "clicked";
+      })()`);
+    }
     let roleChanged = false;
     for (let i = 0; i < 10 && !roleChanged; i++) { await sleep(1000); roleChanged = !!(await c.evalJS(adminTid, `(() => { let f=false; window.__ns.scene.players.forEach((ui)=>{ if(ui.handle==="Gate84Att" && ui.role==="moderator") f=true; }); return f; })()`)); }
     check("8.4-d menú → ⭐ promociona attendee a moderator EN VIVO", promoted === "clicked" && roleChanged, { promoted, roleChanged });
