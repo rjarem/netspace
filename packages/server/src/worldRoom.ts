@@ -120,6 +120,72 @@ export class WorldRoom extends Room<WorldState> {
   private mayTouch(senderRole: string, targetRole: string | undefined): boolean {
     return (WorldRoom.RANK[senderRole] ?? 0) > (WorldRoom.RANK[targetRole || "attendee"] ?? 0);
   }
+
+  // ===== CICLO 10 (mini-plan firmado): colisión + empuje suave =====
+  // Radio de colisión 0.5 tile (aprobado por el auditor: permite aglomeración
+  // parcial, impide oclusión total). worldRoom es MESSAGE-DRIVEN (no hay tick
+  // de server): el barrido corre INLINE al final de cada "move"/"drag"
+  // aceptado, justo después de aplicar la posición del que se mueve. El
+  // empuje es server-forced (NO consume el cap anti-teleport del empujado)
+  // pero SIEMPRE pasa por validateMove — nadie es empujado a un muro o zona
+  // restringida (H15).
+  static readonly COLLIDE_RADIUS = 0.5;
+  static readonly PUSH_MAX_PASSES = 3; // auditor: 1 pasada deja solapes en cadena A→B→C
+
+  private tileOccupied(x: number, y: number, exceptSid: string): boolean {
+    for (const [sid, p] of this.state.players) {
+      if (sid !== exceptSid && p.x === x && p.y === y) return true;
+    }
+    return false;
+  }
+
+  // El que llega se detiene en el último tile libre a lo largo de su ruta
+  // (adyacente al ocupado — radio mínimo por tile, mini-plan).
+  private clampToFree(from: Position, to: Position, sid: string): Position {
+    if (!this.tileOccupied(to.x, to.y, sid)) return to;
+    const steps = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y)) || 1;
+    for (let i = steps - 1; i >= 1; i--) {
+      const x = Math.round(from.x + ((to.x - from.x) * i) / steps);
+      const y = Math.round(from.y + ((to.y - from.y) * i) / steps);
+      if (!this.tileOccupied(x, y, sid)) return { x, y };
+    }
+    return { x: from.x, y: from.y };
+  }
+
+  // Empuje suave: resuelve solapes empujando al que NO se movió, una casilla
+  // hacia el eje de mayor separación, validando muros. Máx 3 pasadas.
+  private resolveOverlaps(moverSid: string): void {
+    for (let pass = 0; pass < WorldRoom.PUSH_MAX_PASSES; pass++) {
+      let pushed = false;
+      const entries = [...this.state.players.entries()];
+      for (let i = 0; i < entries.length; i++) {
+        for (let j = 0; j < entries.length; j++) {
+          const [aSid, a] = entries[i];
+          const [bSid, b] = entries[j];
+          if (aSid === bSid) continue;
+          if (bSid === moverSid) continue; // el que se movió no es empujado
+          const dx = b.x - a.x, dy = b.y - a.y;
+          if (Math.hypot(dx, dy) >= WorldRoom.COLLIDE_RADIUS * 2 - 1e-6) continue;
+          // solape (dist < 1.0): empujar a b una casilla lejos de a.
+          const tryDirs: Position[] = Math.abs(dx) >= Math.abs(dy)
+            ? [{ x: Math.sign(dx) || 1, y: 0 }, { x: 0, y: Math.sign(dy) || 1 }]
+            : [{ x: 0, y: Math.sign(dy) || 1 }, { x: Math.sign(dx) || 1, y: 0 }];
+          for (const d of tryDirs) {
+            const nx = b.x + d.x, ny = b.y + d.y;
+            const valid = validateMove({ x: b.x, y: b.y }, { x: nx, y: ny }, this.map, b.role as UserRole);
+            if (valid.x === nx && valid.y === ny && !this.tileOccupied(nx, ny, bSid)) {
+              b.x = nx; b.y = ny;
+              this.updateZoneFlags(b);
+              pushed = true;
+              break;
+            }
+          }
+        }
+      }
+      if (!pushed) break;
+    }
+  }
+
   // Fase 8: poda de fantasmas + H6 (kickedTokens acotado)
   pruneGhosts: ReturnType<typeof setInterval> | null = null;
   // CICLO 7.2 (auditor-firmado): re-minteo periódico de tokens de voz.
@@ -167,8 +233,10 @@ export class WorldRoom extends Room<WorldState> {
       // comprometido podía saltar cualquier distancia con un solo mensaje.
       const mdist = Math.hypot(to.x - from.x, to.y - from.y);
       if (mdist > DRAG_MAX_TILES) return; // move también es por pasos pequeños
-      player.x = to.x;
-      player.y = to.y;
+      const to2 = this.clampToFree(from, to, client.sessionId); // CICLO 10
+      player.x = to2.x;
+      player.y = to2.y;
+      this.resolveOverlaps(client.sessionId); // CICLO 10 (inline, message-driven)
       this.updateZoneFlags(player);
       this.maybeRefreshLiveKitToken(client, player);
     });
@@ -182,8 +250,10 @@ export class WorldRoom extends Room<WorldState> {
       const dist = Math.hypot(msg.x - from.x, msg.y - from.y);
       if (dist > DRAG_MAX_TILES) return; // reject jumps — client sends throttled steps
       const to = validateMove(from, { x: msg.x, y: msg.y }, this.map, player.role as UserRole);
-      player.x = to.x;
-      player.y = to.y;
+      const to2 = this.clampToFree(from, to, client.sessionId); // CICLO 10
+      player.x = to2.x;
+      player.y = to2.y;
+      this.resolveOverlaps(client.sessionId); // CICLO 10 (inline, message-driven)
       this.updateZoneFlags(player);
     });
 
