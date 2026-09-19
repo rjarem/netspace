@@ -753,6 +753,10 @@ export class WorldRoom extends Room<WorldState> {
     player.y = 4 + 4 * Math.floor(n / 12);
     if (player.y > this.map.h - 5) { player.y = 4; player.x = 4 + ((n + 5) % 12); }
     this.state.players.set(client.sessionId, player);
+    // CICLO 10 (micro-fix autorizado por auditor): el sweep no vivía en onJoin —
+    // con churn (leave→join sobre un tile ocupado) el apilado persistía hasta
+    // que alguien se moviera. Una pasada al entrar lo resuelve.
+    this.resolveOverlaps(client.sessionId);
     // Fase 1.3: late-joiner recibe las fotos de TODOS los que ya están.
     for (const [sid, photo] of this.avatarPhotos) {
       client.send("avatar", { sessionId: sid, photo });

@@ -77,6 +77,24 @@ const main = async () => {
   const uniqS = new Set(sp.map((p) => `${p.x},${p.y}`)).size;
   check("10-d spawn 10 joins → posiciones únicas", uniqS === sp.length && sp.length === 10, { uniqS, count: sp.length });
 
+  // (d2) churn (micro-fix del auditor): join que recicla un tile ocupado.
+  //     b1..b3 ocupan spawns (4,4)(5,4)(6,4) · b1 se va a (20,20) y LEAVE →
+  //     clients.length=2 → el próximo join spawn-ea en (6,4), donde SIGUE b3
+  //     → sin el sweep de onJoin quedarían apilados hasta que alguien se moviera.
+  const b1 = await mk("G10ChA"); const b2 = await mk("G10ChB"); const b3 = await mk("G10ChC");
+  await waitSettle();
+  const p1 = posOf(b1, b1.sessionId)!;
+  b1.send("drag", { x: 20, y: 20 });
+  await waitSettle();
+  b1.leave();
+  await sleep(800); // dejar que el server procese el leave (clients.length baja)
+  const b4 = await mk("G10ChD");
+  await waitSettle();
+  const p3 = posOf(b3, b3.sessionId)!, p4 = posOf(b4, b4.sessionId)!;
+  const dChurn = p3 && p4 ? Math.hypot(p4.x - p3.x, p4.y - p3.y) : -1;
+  check("10-d2 churn: join recicla tile ocupado → sin apilado tras onJoin", dChurn >= 1, { p3, p4, dChurn });
+  try { b2.leave(); } catch {} try { b4.leave(); } catch {}
+
   // (e) estado consistente: cada bot ve las mismas posiciones que el server
   //     (colyseus sincroniza el schema — basta comprobar que no hay NaN)
   const sane = poss.concat(sp).every((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
