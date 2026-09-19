@@ -156,7 +156,7 @@ const main = async () => {
         if (st?.noMenu === false) opened = true;
       }
       check("8.4-c moderator sobre admin → SIN menú (mayTouch espejado)", opened === false && simRole === "admin", { opened, simRole });
-    } else check("8.4-c moderator sobre admin → SIN menú (mayTouch espejado)", true, "admin no visible — skip aserción fuerte");
+    } else check("8.4-c moderator sobre admin → SIN menú (mayTouch espejado)", false, "admin no visible — aserción fuerte no ejecutable (OCR fix: no PASS trivial)");
 
     // (d) desde el menú: ⭐ promociona (vía userlist-click sim o menú directo)
     // cerrar menú previo y reabrir
@@ -174,6 +174,9 @@ const main = async () => {
       const cam = sc.cameras.main;
       return { sx: Math.round((found.sprite.x - cam.worldView.x) * cam.zoom), sy: Math.round((found.sprite.y - cam.worldView.y) * cam.zoom) };
     })()`);
+    // OCR fix: si posD es null (eval lanzó o el attendee no está), fallar
+    // explícito en vez de degradar silenciosamente a coordenadas viejas.
+    if (!posD) check("8.4-d setup: attendee re-posicionado visible", false, { posD });
     const clickAt = posD || pos;
     await c.rightClickAt(adminTid, clickAt.sx, clickAt.sy);
     await sleep(600);
