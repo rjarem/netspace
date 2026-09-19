@@ -134,3 +134,16 @@ El compose de prod en Dokploy baja el código con `curl codeload.github.com/rjar
 ## Gotchas de gates tras Ciclo 9 (2026-09-18)
 1. **LiveKit local debe estar vivo para 8.1-e** (volumen del hablante remoto): `docker run -d --name gr-livekit-gate --network host livekit/livekit-server --dev`. Si 7880 no responde, 8.1-e da vol:-1 y ciclo6 puede fallar cámara — NO es regresión.
 2. **Handle persistido (9.1) × harness:** los gates que entran 2+ usuarios en un MISMO chrome deben poner el handle incondicionalmente (`el.value="${handle}"`), no solo si el campo está vacío — el `gr-handle` guardado pre-llena con el handle del usuario anterior y mezcla roles en el userlist. Corregido en gate-8-1/8-2/8-3/8-4.
+
+## REGLA OBLIGATORIA: preflight antes de gates/regresión (2026-09-18)
+
+Errores que ya se repitieron y cómo se previenen — NINGUNO es regresión de código:
+
+1. **LiveKit local caído** (la higiene elimina docker): 8.1-e da vol:-1 y la cámara de ciclo6 falla. → SIEMPRE correr `bash packages/server/scripts/preflight-env.sh --fix` antes de suites; exige 7880 vivo.
+2. **Static servers :5173/:4175 muertos**: todos los gates chrome dan "antesala no pasó" / ERR_CONNECTION_REFUSED. → mismo preflight (--fix los levanta).
+3. **ADMIN_TOKEN sin exportar**: 401s falsos en suites que mintean. → preflight lo exige en el env.
+4. **pkill auto-suicidio**: `pkill -f "dist/index.js"` mata su propio wrapper si el patrón está en la línea del comando. → usar SIEMPRE `scripts/killgate-server.sh` (el patrón vive solo dentro del script).
+5. **Server viejo tras rebuild**: un server :2567 vivo sirve el dist que cargó al arrancar. → tras cada `npm run build`, matar y re-levantar (killgate-server.sh + arranque con env completo).
+6. **gr-handle heredado en harness**: gates con 2+ usuarios en un mismo chrome deben poner el handle incondicionalmente (fix 51995ec + parche gate-8-0).
+
+Si un gate falla: correr preflight primero; solo si está verde, el fail se investiga como código.
