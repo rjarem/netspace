@@ -63,7 +63,7 @@ async function openWithRole(role: string): Promise<any> {
     if (hasGo) {
       const hasHandle = await c.evalJS(tid, "!!document.getElementById('grHandle')");
       if (hasHandle) {
-        await c.evalJS(tid, `(() => { const el=document.getElementById('grHandle'); if(el && !el.value){ el.value="Gate80${role}"; el.dispatchEvent(new Event("input")); } })()`);
+        await c.evalJS(tid, `(() => { const el=document.getElementById('grHandle'); if(el){ el.value="Gate80${role}"; el.dispatchEvent(new Event("input")); } })()`);
       }
       const snap = await c.evalJS(tid, "(() => { const v=document.querySelector('video'); const s=document.getElementById('grSnap'); if(s && v && v.videoWidth){ s.click(); return true; } return false; })()");
       if (snap) await sleep(500);
@@ -123,7 +123,7 @@ async function liveRoleSwap(adminRole: string, targetRole: string): Promise<any>
       await sleep(1000);
       const hasGo = await c.evalJS(tid, "(() => { const b=document.getElementById('grGo'); return !!b && !b.disabled; })()");
       if (hasGo) {
-        await c.evalJS(tid, `(() => { const el=document.getElementById('grHandle'); if(el && !el.value){ el.value="Gate80live${role}"; el.dispatchEvent(new Event("input")); } })()`);
+        await c.evalJS(tid, `(() => { const el=document.getElementById('grHandle'); if(el){ el.value="Gate80live${role}"; el.dispatchEvent(new Event("input")); } })()`);
         const snap = await c.evalJS(tid, "(() => { const v=document.querySelector('video'); const s=document.getElementById('grSnap'); if(s && v && v.videoWidth){ s.click(); return true; } return false; })()");
         if (snap) await sleep(500);
         await c.evalJS(tid, "document.getElementById('grGo')?.click()");
