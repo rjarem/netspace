@@ -4,7 +4,7 @@
 # Uso: bash scripts/preflight-env.sh [--fix]
 #   --fix: intenta levantar lo que falte (livekit, static servers).
 set -u
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 FIX="${1:-}"
 FAIL=0
 
